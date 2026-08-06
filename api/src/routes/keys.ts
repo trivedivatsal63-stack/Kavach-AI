@@ -1,10 +1,52 @@
 import { Router } from "express";
 import { prisma } from "../db";
 import { requireAuth } from "../auth";
-import { generateLiteLLMKey, revokeLiteLLMKey } from "../litellm";
+import { generateLiteLLMKey, revokeLiteLLMKey, testLiteLLMKey } from "../litellm";
 
 export const keysRouter = Router();
 keysRouter.use(requireAuth);
+
+// Lets a logged-in user test any key (not necessarily one of their own —
+// e.g. pasting one in to sanity-check it) against a real completion,
+// without curl/Postman. The tested key is never logged or persisted: it
+// only ever appears in the outgoing Authorization header below.
+keysRouter.post("/test", async (req, res) => {
+  const apiKey =
+    typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
+  const message =
+    typeof req.body?.message === "string" && req.body.message.trim()
+      ? req.body.message.trim()
+      : "Say hello in one sentence.";
+
+  if (!apiKey) {
+    res.status(400).json({ error: "apiKey is required." });
+    return;
+  }
+
+  const startedAt = Date.now();
+  try {
+    const result = await testLiteLLMKey(apiKey, message);
+    const latencyMs = Date.now() - startedAt;
+
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.errorMessage });
+      return;
+    }
+
+    res.json({
+      reply: result.reply,
+      latencyMs,
+      promptTokens: result.promptTokens ?? null,
+      completionTokens: result.completionTokens ?? null,
+      totalTokens: result.totalTokens ?? null,
+    });
+  } catch (err) {
+    // err is a network/fetch-level exception here — it never contains the
+    // key, which only ever went out in a request header, not this catch.
+    console.error("POST /keys/test failed:", err);
+    res.status(502).json({ error: "Failed to reach the inference gateway." });
+  }
+});
 
 keysRouter.post("/", async (req, res) => {
   const userId = req.userId!;

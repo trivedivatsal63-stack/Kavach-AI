@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   listKeys,
   generateKey,
   revokeKey,
   getUsage,
   topUp,
+  testKey,
   ApiError,
   type ApiKeySummary,
   type UsageRow,
+  type TestKeyResponse,
 } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Layout } from "../components/Layout";
+import { KeyTestResult } from "../components/KeyTestResult";
 
 export function DashboardPage() {
   const { token, user, updateUser } = useAuth();
@@ -21,6 +25,9 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [testResult, setTestResult] = useState<TestKeyResponse | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testPending, setTestPending] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -42,6 +49,8 @@ export function DashboardPage() {
     setError(null);
     setCopied(false);
     setBusy(true);
+    setTestResult(null);
+    setTestError(null);
     try {
       const result = await generateKey(token);
       setRevealedKey(result.key);
@@ -86,6 +95,21 @@ export function DashboardPage() {
     if (!revealedKey) return;
     await navigator.clipboard.writeText(revealedKey);
     setCopied(true);
+  }
+
+  async function handleTestRevealedKey() {
+    if (!token || !revealedKey) return;
+    setTestResult(null);
+    setTestError(null);
+    setTestPending(true);
+    try {
+      const result = await testKey(token, revealedKey);
+      setTestResult(result);
+    } catch (err) {
+      setTestError(err instanceof ApiError ? err.message : "Failed to test key.");
+    } finally {
+      setTestPending(false);
+    }
   }
 
   if (loading || !user) {
@@ -134,7 +158,12 @@ export function DashboardPage() {
         {/* API keys */}
         <div className="w-full max-w-xl space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">API Keys</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold">API Keys</h2>
+              <Link to="/test" className="text-xs underline text-gray-500">
+                Test an API key
+              </Link>
+            </div>
             <button
               onClick={handleGenerate}
               disabled={busy}
@@ -162,7 +191,17 @@ export function DashboardPage() {
                 >
                   {copied ? "Copied" : "Copy"}
                 </button>
+                <button
+                  onClick={handleTestRevealedKey}
+                  disabled={testPending}
+                  className="rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-50 dark:border-gray-700"
+                >
+                  {testPending ? "Testing…" : "Test this key"}
+                </button>
               </div>
+              {(testResult || testError) && (
+                <KeyTestResult result={testResult} error={testError} />
+              )}
             </div>
           )}
 

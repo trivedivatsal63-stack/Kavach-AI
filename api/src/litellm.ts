@@ -138,6 +138,73 @@ export async function updateLiteLLMKeyBudget(
   }
 }
 
+// Matches litellm/config.yaml's model_name (and VLLM_SERVED_NAME) — this
+// is a single-model deployment, so it's hardcoded here the same way
+// web/src/pages/DocsPage.tsx hardcodes it for its curl/Python examples.
+const MODEL_NAME = "qwen2.5-1.5b";
+
+export interface TestKeyResult {
+  ok: boolean;
+  status: number;
+  reply?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  errorMessage?: string;
+}
+
+// Deliberately uses the caller-supplied key as the bearer token — NOT the
+// master key — so this only ever exercises exactly what a real client
+// would experience (including a revoked/invalid/budget-exhausted key
+// failing exactly as LiteLLM would tell that client).
+export async function testLiteLLMKey(
+  apiKey: string,
+  message: string
+): Promise<TestKeyResult> {
+  const res = await fetch(`${LITELLM_BASE_URL}/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MODEL_NAME,
+      messages: [{ role: "user", content: message }],
+    }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const errorMessage =
+      (data as { error?: { message?: string } })?.error?.message ??
+      `LiteLLM returned ${res.status}`;
+    return { ok: false, status: res.status, errorMessage };
+  }
+
+  const choice = (
+    data as { choices?: Array<{ message?: { content?: string } }> }
+  ).choices?.[0];
+  const usage = (
+    data as {
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
+    }
+  ).usage;
+
+  return {
+    ok: true,
+    status: res.status,
+    reply: choice?.message?.content ?? "",
+    promptTokens: usage?.prompt_tokens,
+    completionTokens: usage?.completion_tokens,
+    totalTokens: usage?.total_tokens,
+  };
+}
+
 export interface KeyUsageSummary {
   totalSpend: number;
   totalRequests: number;

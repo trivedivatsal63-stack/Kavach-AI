@@ -39,6 +39,14 @@ export interface TopUpResponse {
   keysUpdated: number;
 }
 
+export interface TestKeyResponse {
+  reply: string;
+  latencyMs: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -105,4 +113,12 @@ export function getUsage(token: string) {
 
 export function topUp(token: string) {
   return request<TopUpResponse>("/credits/topup", { method: "POST" }, token);
+}
+
+export function testKey(token: string, apiKey: string, message?: string) {
+  return request<TestKeyResponse>(
+    "/keys/test",
+    { method: "POST", body: JSON.stringify({ apiKey, message }) },
+    token
+  );
 }

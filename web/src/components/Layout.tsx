@@ -26,6 +26,9 @@ export function Layout({ children }: { children: ReactNode }) {
               <Link to="/dashboard" className="hover:underline">
                 Dashboard
               </Link>
+              <Link to="/test" className="hover:underline">
+                Test a key
+              </Link>
               <button onClick={handleLogout} className="underline">
                 Log out
               </button>

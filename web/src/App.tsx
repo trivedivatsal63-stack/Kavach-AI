@@ -5,6 +5,7 @@ import { SignupPage } from "./pages/SignupPage";
 import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DocsPage } from "./pages/DocsPage";
+import { TestKeyPage } from "./pages/TestKeyPage";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/docs" element={<DocsPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/test" element={<TestKeyPage />} />
       </Route>
     </Routes>
   );
