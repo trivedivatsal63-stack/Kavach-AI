@@ -1,18 +1,26 @@
-# ai-api-platform — Phase 1: Infrastructure
+# ai-api-platform
 
-A self-hosted AI API stack: a local vLLM inference engine sitting behind
-LiteLLM as an OpenAI-compatible API gateway, with Postgres backing both
-LiteLLM's own state (keys, spend, usage logs) and a `dashboard` database
-reserved for a future management UI.
-
-This phase is infrastructure only — no dashboard, no Prisma schema, no
-auth code. Just three services you can point an OpenAI SDK at.
+A self-hosted AI API platform: a local vLLM inference engine sitting
+behind LiteLLM as an OpenAI-compatible gateway (key issuance, budgets,
+spend/usage tracking), with a small Express API and a React dashboard on
+top for account signup, API key management, credit balance, and usage
+analytics.
 
 ```
-client → LiteLLM (:4000, OpenAI-compatible, key/budget/rate-limit enforcement)
-              → vLLM (:8000, OpenAI-compatible, runs the actual model on GPU)
-LiteLLM ↔ Postgres (:5432, "litellm" db: keys, spend, usage; "dashboard" db: reserved)
+Browser → web (:5173, React/Vite dashboard)
+              → api (:4001, Express: auth, keys, credits, usage)
+                    → LiteLLM (:4000, admin API: /key/generate, /key/info, /spend/logs/v2, ...)
+client apps  → LiteLLM (:4000, OpenAI-compatible: /v1/chat/completions)
+                    → vLLM (:8000, OpenAI-compatible, runs the actual model on GPU)
+
+Postgres (:5432) — "litellm" db (LiteLLM's own keys/spend/usage state)
+                  — "dashboard" db (api/'s User + ApiKey tables)
 ```
+
+`web` never talks to LiteLLM directly for account/key data, and `api`
+never maintains its own usage ledger — LiteLLM stays the single source of
+truth for spend, budgets, and usage; `api` only reads it and drives real
+LiteLLM key budgets from each user's credit balance.
 
 ## Prerequisites
 
@@ -37,25 +45,26 @@ LiteLLM ↔ Postgres (:5432, "litellm" db: keys, spend, usage; "dashboard" db: r
 
 ```bash
 cp .env.example .env
-# edit .env — at minimum set POSTGRES_PASSWORD and LITELLM_MASTER_KEY
+# edit .env — at minimum set POSTGRES_PASSWORD, LITELLM_MASTER_KEY,
+# JWT_SECRET
 
-docker compose up -d postgres vllm litellm
+docker compose up -d
 docker compose logs -f vllm      # first boot downloads the model; watch until "Application startup complete"
-docker compose ps                # confirm all three show (healthy)
+docker compose ps                # confirm all five show (healthy)
 ```
 
-Generate a test API key against LiteLLM's admin endpoint:
+Then open `http://localhost:5173` and sign up — that creates an account
+with a $5.00 mock credit balance, from which you can generate a real
+LiteLLM API key and use it against `http://localhost:4000/v1/chat/completions`.
+
+To drive LiteLLM directly instead (e.g. for scripting):
 
 ```bash
 curl -s http://localhost:4000/key/generate \
   -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{}'
-```
 
-Use the returned key to call the model through LiteLLM:
-
-```bash
 curl -s http://localhost:4000/v1/chat/completions \
   -H "Authorization: Bearer <key-from-above>" \
   -H "Content-Type: application/json" \
@@ -67,11 +76,13 @@ curl -s http://localhost:4000/v1/chat/completions \
 
 ## Ports
 
-| Port | Service  | What it serves                                                        |
-| ---- | -------- | ---------------------------------------------------------------------- |
-| 4000 | LiteLLM  | OpenAI-compatible gateway (`/v1/chat/completions`, `/key/generate`, spend/usage APIs) — this is what clients and the future dashboard should talk to |
-| 8000 | vLLM     | Raw OpenAI-compatible inference API — not meant for direct client use, only LiteLLM routes to it |
-| 5432 | Postgres | `litellm` db (keys/spend/usage) and `dashboard` db (reserved for future use) |
+| Port | Service    | What it serves                                                                                    |
+| ---- | ---------- | -------------------------------------------------------------------------------------------------- |
+| 5173 | web        | React dashboard — signup/login, API key management, credit balance/top-up, usage                  |
+| 4001 | api        | Express API backing `web` — `/auth`, `/keys`, `/credits`, `/usage` (JWT-protected)                 |
+| 4000 | LiteLLM    | OpenAI-compatible gateway (`/v1/chat/completions`) and admin API (`/key/generate`, `/spend/logs/v2`, ...) |
+| 8000 | vLLM       | Raw OpenAI-compatible inference API — not meant for direct client use, only LiteLLM routes to it   |
+| 5432 | Postgres   | `litellm` db (LiteLLM's own state) and `dashboard` db (`api/`'s User + ApiKey tables)               |
 
 ## Notes
 
@@ -81,10 +92,20 @@ curl -s http://localhost:4000/v1/chat/completions \
   well above the CUDA 12.8 floor Blackwell requires. Don't downgrade this
   tag on a 50-series GPU without re-checking `docker/versions.json` at the
   target tag.
-- `store_model_in_db: true` in `litellm/config.yaml` lets a future
-  dashboard add/edit models via LiteLLM's API without redeploying this
-  stack.
-- `default_key_generate_params` (rpm_limit 20, max_budget 5.0,
-  budget_duration 30d) are placeholder ceilings applied when a
-  `/key/generate` call doesn't specify its own — a dashboard should
-  override them per client.
+- `store_model_in_db: true` in `litellm/config.yaml` lets models be
+  added/edited via LiteLLM's API without redeploying this stack.
+- `litellm/config.yaml`'s per-token `input_cost_per_token`/
+  `output_cost_per_token` are placeholder rates, not real economics — the
+  model has no entry in LiteLLM's built-in cost map (it's self-hosted), so
+  without them every request would compute $0.00 spend and budget
+  enforcement could never fire.
+- `api/` generates each key's real LiteLLM `max_budget` from the user's
+  current `creditBalanceUsd` at generation time, and updates it again on
+  every mock credit top-up — the credit balance is enforced by LiteLLM
+  itself, not just displayed.
+- `web/`'s JWT is kept in memory only (React state, no localStorage) —
+  safer against XSS than localStorage, at the cost of losing the session
+  on a hard page reload. An httpOnly cookie would be the further
+  improvement, but requires `api/` to set it.
+- The original Next.js dashboard (Phase 1–4) was replaced by `api/` +
+  `web/`; see git history for the removed monolith if needed.

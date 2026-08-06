@@ -21,8 +21,9 @@ litellm_settings:
   drop_params: true # silently drop OpenAI params vLLM doesn't support instead of erroring
   default_key_generate_params:
     # Placeholder ceilings applied to any /key/generate call that doesn't
-    # override them. A future dashboard will pass per-client rpm_limit /
-    # max_budget / budget_duration explicitly when provisioning keys.
+    # override them. api/ (src/routes/keys.ts) always passes its own
+    # max_budget per user when provisioning keys; these are the fallback
+    # for any other direct caller.
     rpm_limit: 20
     max_budget: 5.0
     budget_duration: "30d"
@@ -32,5 +33,6 @@ general_settings:
   database_url: os.environ/DATABASE_URL # postgres connection string, "litellm" database
   store_model_in_db: true # allow models to be added/edited via API/UI, not just this file
   # disable_spend_logs defaults to false, so every request's cost/usage is
-  # written to the LiteLLM_SpendLogs table automatically — this is what a
-  # future dashboard reads via LiteLLM's /spend and /usage endpoints.
+  # written to the LiteLLM_SpendLogs table automatically — this is what
+  # api/'s GET /usage (src/litellm.ts, getLiteLLMKeyUsage) reads via
+  # /spend/logs/v2.

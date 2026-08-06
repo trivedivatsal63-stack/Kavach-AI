@@ -136,6 +136,36 @@ services:
       retries: 5
       start_period: 15s
 
+  # React (Vite) frontend — talks only to api/ for account/key/usage data,
+  # and points its own /docs examples at litellm directly for inference.
+  web:
+    build:
+      context: ./web
+      args:
+        # Baked into the static bundle at build time (browser-facing URLs —
+        # the browser runs on the host, so it uses the same published
+        # localhost ports as everything else, not compose network hostnames).
+        VITE_API_BASE_URL: http://localhost:${API_PORT:-4001}
+        VITE_LITELLM_BASE_URL: http://localhost:${LITELLM_PORT:-4000}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:5173/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
 volumes:
   postgres_data:
   huggingface_cache:
