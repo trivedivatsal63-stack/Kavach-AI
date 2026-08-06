@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  hashedPassword   String
+  name             String?
+  // Mock credit system — starter balance only. Drives each key's real
+  // LiteLLM max_budget at generation/top-up time; not just a display number.
+  creditBalanceUsd Decimal  @default(5.0) @db.Decimal(10, 2)
+  isAdmin          Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  apiKeys          ApiKey[]
+}
+
+// The actual key value is never stored here — only LiteLLM's hashed
+// token_id — since LiteLLM is the source of truth for the plaintext key
+// and its spend/limits.
+model ApiKey {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  litellmKeyId String    @unique
+  createdAt    DateTime  @default(now())
+  revokedAt    DateTime?
+}

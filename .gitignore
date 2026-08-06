@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# env files (contain real secrets) — .env.example files are tracked
+.env
+.env.local
+*/.env
+*/.env.local
+
+# build output
+dist/
+.next/
+build/
+
+# misc
+*.log
+.DS_Store

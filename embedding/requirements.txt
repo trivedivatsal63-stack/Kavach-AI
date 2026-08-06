@@ -1,0 +1,8 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+fastembed>=0.5,<1.0
+# 1.21-1.26 are CUDA 12.8 + cuDNN 9 builds (see Dockerfile base image).
+# Installing this uninstalls the CPU onnxruntime that fastembed pulls in.
+onnxruntime-gpu>=1.21,<1.27
+# VRAM probing for the GPU->CPU fallback decision.
+nvidia-ml-py>=12.0,<13.0
