@@ -96,47 +96,8 @@ services:
       retries: 10
       start_period: 30s
 
-  dashboard:
-    build:
-      context: ./dashboard
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      litellm:
-        condition: service_healthy
-    environment:
-      # "postgres"/"litellm" are compose network hostnames; dashboard/.env
-      # uses localhost instead for running commands on the host.
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/dashboard
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
-      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
-      LITELLM_BASE_URL: http://litellm:4000
-      # Used server-side only (lib/litellm.ts, marked "server-only") to call
-      # LiteLLM's admin API — never sent to the browser.
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-    ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
-    healthcheck:
-      # node:22-slim has neither curl nor wget — use Node's own global
-      # fetch (Node 18+) against a dependency-free route so this only
-      # verifies the Next.js server itself is serving, not the DB/auth.
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  # Express + PostgreSQL API replacing the Next.js dashboard's backend.
-  # The "dashboard" service above is kept running (unused by this) until
-  # the new API + a separate React frontend are confirmed working end to
-  # end — it is not deleted automatically.
+  # Express + PostgreSQL API. Replaces the old Next.js dashboard's backend
+  # (removed — see git history for the prior monolith).
   api:
     build:
       context: ./api
