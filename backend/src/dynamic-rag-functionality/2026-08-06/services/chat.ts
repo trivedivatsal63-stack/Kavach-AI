@@ -8,10 +8,15 @@ import type { Citation, RagChatResult } from "../types";
 // so generating an answer consumes the same credit pool as any other key.
 
 const SYSTEM_PROMPT =
-  "You are a document-assistant. Answer the user's question using ONLY the " +
-  "provided context. If the context does not contain the answer, say so " +
-  "clearly instead of guessing. Cite your sources with [n] matching the " +
-  "bracketed numbers in the context. Keep the answer concise.";
+  "You are a document-assistant answering questions about the user's uploaded " +
+  "documents. Use ONLY the provided context. The numbered chunks vary in " +
+  "relevance — trust the highest-match chunks and ignore unrelated ones. " +
+  "Citation and reference entries (footnotes, bibliographies, publisher names, " +
+  "journal details) are NOT answers: never present a publisher or a reference " +
+  "string as the author or title of a document. If the context does not contain " +
+  "the answer, say you couldn't find it in the documents instead of guessing. " +
+  "Cite your sources with [n] matching the numbered context. Keep the answer " +
+  "concise.";
 
 export async function answerQuestion(input: {
   userId: string;
@@ -42,7 +47,8 @@ export async function answerQuestion(input: {
         c.source,
         ...(c.headingPath && c.headingPath.length > 0 ? c.headingPath : []),
       ].join(" > ");
-      return `[${i + 1}] ${location}\n${c.excerpt}`;
+      const match = Math.round(c.score * 100);
+      return `[${i + 1}] ${location} — match ${match}%\n${c.excerpt}`;
     })
     .join("\n\n");
 

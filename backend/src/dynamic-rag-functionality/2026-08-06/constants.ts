@@ -28,9 +28,11 @@ export const RAG_CHAT_MODEL = "qwen2.5-1.5b";
 // ── Chunking (characters, not tokens — token count is estimated) ────────
 // Structure-aware chunker: paragraphs group up to MAX_CHUNK_CHARS, tables
 // stay whole, section changes flush the current chunk so chunks stay aligned
-// to the heading tree.
-export const MAX_CHUNK_CHARS = 1500;
-export const MIN_CHUNK_CHARS = 300;
+// to the heading tree. Chunks are deliberately small (~200 tokens) so each
+// vector is a tight, self-contained unit of meaning — big chunks dilute the
+// embedding and let footnote/reference pages outrank real content.
+export const MAX_CHUNK_CHARS = 800;
+export const MIN_CHUNK_CHARS = 200;
 // Only applied when a single oversized block (e.g. a huge table) must be
 // hard-split mid-content — keeps a little context across the cut.
 export const MAX_OVERLAP_CHARS = 120;
@@ -50,4 +52,27 @@ export type AllowedUploadMime = (typeof ALLOWED_UPLOAD_MIMES)[number];
 // service request bodies reasonable.
 export const EMBED_BATCH_SIZE = 32;
 
-export const DEFAULT_RETRIEVAL_LIMIT = 5;
+export const DEFAULT_RETRIEVAL_LIMIT = 6;
+
+// Vectors scoring below this (Qdrant cosine similarity) are treated as noise
+// and dropped. Paraphrase-MiniLM scores relevant chunks well above 0.25 and
+// unrelated chunks below it, so this filters the long tail of weak matches.
+export const MIN_RETRIEVAL_SCORE = 0.25;
+
+// Section headings under which content is dropped entirely. Books and papers
+// bury the real facts in endnote/bibliography sections full of publisher
+// names, years, and "Author, Title (Publisher, Year)" lines — those pollute
+// retrieval (a reference line matching a name often outranks the title page).
+// Matching is case-insensitive; headings like "NOTES" / "Works Cited:" work.
+export const JUNK_SECTION_HEADINGS = [
+  "notes",
+  "endnotes",
+  "references",
+  "bibliography",
+  "works cited",
+  "works consulted",
+  "footnotes",
+  "further reading",
+  "sources cited",
+  "selected bibliography",
+] as const;

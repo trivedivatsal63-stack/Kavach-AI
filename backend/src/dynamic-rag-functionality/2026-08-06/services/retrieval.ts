@@ -1,5 +1,9 @@
 import { pool } from "../db";
-import { DOCUMENT_STATUS, DEFAULT_RETRIEVAL_LIMIT } from "../constants";
+import {
+  DOCUMENT_STATUS,
+  DEFAULT_RETRIEVAL_LIMIT,
+  MIN_RETRIEVAL_SCORE,
+} from "../constants";
 import { embedQueries } from "./embedding";
 import { deleteDocumentPoints, searchChunks } from "./qdrant";
 import { getChunksByIds, softDeleteDocument } from "./documents";
@@ -27,11 +31,14 @@ export async function retrieve(params: {
     documentIds: params.documentIds,
   });
 
-  if (hits.length === 0) return [];
+  // Drop the weak tail — low cosine similarity means the chunk is unrelated
+  // noise, and stuffing it into the prompt invites hallucination.
+  const strongHits = hits.filter((h) => h.score >= MIN_RETRIEVAL_SCORE);
+  if (strongHits.length === 0) return [];
 
-  const chunksById = await getChunksByIds(hits.map((h) => h.chunkId));
+  const chunksById = await getChunksByIds(strongHits.map((h) => h.chunkId));
   const citations: Citation[] = [];
-  for (const hit of hits) {
+  for (const hit of strongHits) {
     const chunk = chunksById.get(hit.chunkId);
     if (!chunk) continue;
     citations.push({

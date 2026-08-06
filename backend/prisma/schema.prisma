@@ -31,3 +31,69 @@ model ApiKey {
   createdAt    DateTime  @default(now())
   revokedAt    DateTime?
 }
+
+// ── RAG module tables ─────────────────────────────────────────────────────
+// These mirror the raw SQL in src/dynamic-rag-functionality/2026-08-06/db.ts
+// (ensureSchema) exactly. They're declared here so `prisma db push` treats
+// them as known state instead of drift — otherwise db push sees the tables as
+// "not in the schema" and refuses to boot ("--accept-data-loss" would then
+// DROP the user's documents, which is never acceptable). db.ts remains the
+// source of truth for the CREATE statements; the app creates them via
+// ensureSchema() on startup regardless of Prisma.
+
+model RagDocument {
+  id            String      @id
+  userId        String      @map("user_id")
+  name          String
+  mimeType      String      @map("mime_type")
+  sizeBytes     BigInt      @map("size_bytes")
+  status        String
+  error         String?
+  embeddingModel String     @map("embedding_model")
+  chunkCount    Int         @default(0) @map("chunk_count")
+  createdAt     DateTime    @default(now()) @db.Timestamptz @map("created_at")
+  deletedAt     DateTime?   @db.Timestamptz @map("deleted_at")
+  chunks        RagChunk[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("rag_documents")
+}
+
+model RagChunk {
+  id          String       @id
+  documentId  String       @map("document_id")
+  chunkIndex  Int          @map("chunk_index")
+  headingPath Json?        @map("heading_path") @db.JsonB
+  source      String
+  page        Int?
+  tokenCount  Int          @default(0) @map("token_count")
+  content     String
+  document    RagDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+  @@map("rag_chunks")
+}
+
+model RagKey {
+  id        String     @id
+  userId    String     @map("user_id")
+  name      String
+  keyHash   String     @unique @map("key_hash")
+  tokenId   String     @unique @map("token_id")
+  createdAt DateTime   @default(now()) @db.Timestamptz @map("created_at")
+  revokedAt DateTime?  @db.Timestamptz @map("revoked_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("rag_keys")
+}
+
+model RagChatKey {
+  userId       String    @id @map("user_id")
+  tokenId      String    @unique @map("token_id")
+  keyHash      String    @unique @map("key_hash")
+  encryptedKey String    @map("encrypted_key")
+  createdAt    DateTime  @default(now()) @db.Timestamptz @map("created_at")
+
+  @@map("rag_chat_keys")
+}
