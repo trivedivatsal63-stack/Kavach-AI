@@ -55,9 +55,18 @@ export function TestKeyPage() {
                 required
                 placeholder="sk-…"
                 value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  if (error) setError(null);
+                }}
                 className="input font-mono"
+                aria-invalid={Boolean(error)}
               />
+              {error && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                  {error}
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="message" className="label">
@@ -82,10 +91,9 @@ export function TestKeyPage() {
             </button>
           </form>
 
-          {(result || error) && (
-            <KeyTestResult result={result} error={error} />
-          )}
-        </div>
+          {result && !error && (
+            <KeyTestResult result={result} error={null} />
+          )}        </div>
       </div>
     </Layout>
   );

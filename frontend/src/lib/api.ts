@@ -69,15 +69,19 @@ async function request<T>(
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    // Signal expired/invalid session so callers (and AuthContext consumers)
-    // can clear localStorage JWT.
-    if (res.status === 401 && token) {
+    const message =
+      (data as { error?: string }).error ??
+      `Request failed with status ${res.status}`;
+    // Only clear the dashboard session for real JWT failures — never for
+    // downstream "invalid API key" style errors that used to leak as 401.
+    if (
+      res.status === 401 &&
+      token &&
+      /missing bearer|invalid or expired token/i.test(message)
+    ) {
       window.dispatchEvent(new CustomEvent("kavach:unauthorized"));
     }
-    throw new ApiError(
-      res.status,
-      (data as { error?: string }).error ?? `Request failed with status ${res.status}`
-    );
+    throw new ApiError(res.status, message);
   }
   return data as T;
 }
@@ -238,16 +242,17 @@ export function ragUploadWithProgress(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(data as { document: RagDocument });
       } else {
-        if (xhr.status === 401 && token) {
+        const message =
+          (data as { error?: string }).error ??
+          `Request failed with status ${xhr.status}`;
+        if (
+          xhr.status === 401 &&
+          token &&
+          /missing bearer|invalid or expired token/i.test(message)
+        ) {
           window.dispatchEvent(new CustomEvent("kavach:unauthorized"));
         }
-        reject(
-          new ApiError(
-            xhr.status,
-            (data as { error?: string }).error ??
-              `Request failed with status ${xhr.status}`
-          )
-        );
+        reject(new ApiError(xhr.status, message));
       }
     };
     xhr.onerror = () => reject(new ApiError(0, "Network error during upload."));

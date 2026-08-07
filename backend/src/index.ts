@@ -5,11 +5,13 @@ import { assertDatabaseConnection, prisma } from "./models/prisma";
 import { ensureSchema } from "./models/rag/pool";
 import { markInterruptedAsFailed } from "./services/rag/documents.service";
 import { ensureCollection } from "./services/rag/qdrant.service";
+import { purgeLegacyNonUuidUsers } from "./jobs/purgeLegacyUsers";
 
 async function bootstrap() {
   try {
     await assertDatabaseConnection();
     await ensureSchema();
+    await purgeLegacyNonUuidUsers();
     await markInterruptedAsFailed();
     console.log(`[db] Connected to Postgres (${maskDbUrl(env.databaseUrl)})`);
   } catch (err) {

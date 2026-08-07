@@ -69,7 +69,32 @@ export async function testKey(apiKey: string, message?: string) {
   const latencyMs = Date.now() - startedAt;
 
   if (!result.ok) {
-    throw new AppError(result.status, result.errorMessage ?? "Key test failed.");
+    // Never forward LiteLLM's 401 here — the dashboard JWT uses 401 for
+    // session expiry, and the frontend logs the user out on that status.
+    // An invalid *API key* is a validation problem, not a logged-out session.
+    if (result.status === 401 || result.status === 403) {
+      throw new AppError(
+        400,
+        "Invalid API key. Enter a valid key and try again."
+      );
+    }
+    if (result.status === 402 || result.status === 429) {
+      throw new AppError(
+        402,
+        result.errorMessage ??
+          "This key is out of credits or rate-limited."
+      );
+    }
+    if (result.status >= 500) {
+      throw new AppError(
+        502,
+        result.errorMessage ?? "Inference gateway error."
+      );
+    }
+    throw new AppError(
+      400,
+      result.errorMessage ?? "Key test failed. Enter a valid API key."
+    );
   }
 
   return {

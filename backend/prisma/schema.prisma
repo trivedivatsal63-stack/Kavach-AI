@@ -8,7 +8,7 @@ datasource db {
 }
 
 model User {
-  id               String   @id @default(cuid())
+  id               String   @id @default(uuid())
   email            String   @unique
   hashedPassword   String
   name             String?
@@ -24,22 +24,20 @@ model User {
 // token_id — since LiteLLM is the source of truth for the plaintext key
 // and its spend/limits.
 model ApiKey {
-  id           String    @id @default(cuid())
+  id           String    @id @default(uuid())
   userId       String
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   litellmKeyId String    @unique
   createdAt    DateTime  @default(now())
   revokedAt    DateTime?
+
+  @@index([userId])
 }
 
 // ── RAG module tables ─────────────────────────────────────────────────────
-// These mirror the raw SQL in src/dynamic-rag-functionality/2026-08-06/db.ts
-// (ensureSchema) exactly. They're declared here so `prisma db push` treats
-// them as known state instead of drift — otherwise db push sees the tables as
-// "not in the schema" and refuses to boot ("--accept-data-loss" would then
-// DROP the user's documents, which is never acceptable). db.ts remains the
-// source of truth for the CREATE statements; the app creates them via
-// ensureSchema() on startup regardless of Prisma.
+// Declared so `prisma db push` does not treat them as drift. Runtime DDL for
+// these tables lives in models/rag/pool.ts (ensureSchema) — same pattern as
+// before; no standalone .sql migration files.
 
 model RagDocument {
   id            String      @id

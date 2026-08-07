@@ -1,12 +1,16 @@
 import jwt from "jsonwebtoken";
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config";
+import { isUuid } from "../utils/uuid";
 
 export interface JwtPayload {
   userId: string;
 }
 
 export function signJwt(payload: JwtPayload): string {
+  if (!isUuid(payload.userId)) {
+    throw new Error("JWT userId must be a UUID");
+  }
   // Session lifetime for dashboard JWT (Bearer). Clients store this in localStorage.
   return jwt.sign(payload, env.jwtSecret(), { expiresIn: "7h" });
 }
@@ -30,6 +34,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = header.slice("Bearer ".length);
   try {
     const decoded = jwt.verify(token, env.jwtSecret()) as JwtPayload;
+    if (!decoded.userId || !isUuid(decoded.userId)) {
+      res.status(401).json({ error: "Invalid or expired token" });
+      return;
+    }
     req.userId = decoded.userId;
     next();
   } catch {
