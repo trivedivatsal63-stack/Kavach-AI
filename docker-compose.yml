@@ -1,76 +1,36 @@
+# Hybrid stack: ONLY inference runs in Docker (vLLM + LiteLLM).
+# Everything else runs on the host in separate terminals:
+#   Postgres, Qdrant, embedding, backend, frontend
+#
+# LiteLLM reaches:
+#   - vLLM via the compose network (http://vllm:8000/v1)
+#   - host Postgres via host.docker.internal (litellm database)
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f vllm
+
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      # Comma-separated list consumed by init-multi-db.sh to create one
-      # database per entry on this single postgres instance.
-      POSTGRES_MULTIPLE_DATABASES: litellm,dashboard
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init-multi-db.sh:/docker-entrypoint-initdb.d/init-multi-db.sh:ro
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # Dedicated vector store for the RAG module. Kept separate from Postgres so
-  # embeddings can be queried/reindexed independently and the schema can't
-  # tangle with LiteLLM's or the dashboard's.
-  qdrant:
-    image: qdrant/qdrant:v1.19.0
-    restart: unless-stopped
-    volumes:
-      - qdrant_data:/qdrant/storage
-    ports:
-      - "${QDRANT_PORT:-6333}:6333"
-    healthcheck:
-      # qdrant image has bash but no curl/wget/python — hit /healthz over a
-      # bash /dev/tcp socket and check the HTTP status line.
-      test:
-        - CMD-SHELL
-        - >-
-          bash -c '
-          exec 3<>/dev/tcp/127.0.0.1/6333;
-          printf "GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3;
-          IFS= read -r line <&3;
-          [[ "$$line" == *"200"* ]]
-          '
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   vllm:
-    # v0.26.0, released 2026-07-27. Confirmed via docker/versions.json in the
-    # vllm-project/vllm repo at this tag: default TORCH_CUDA_ARCH_LIST includes
-    # "12.0" (sm_120 = Blackwell / RTX 50-series) and the base image is
-    # nvidia/cuda:13.0.2, which exceeds the CUDA 12.8 floor Blackwell requires.
+    # v0.26.0 — CUDA arch includes modern GPUs; works on RTX 2050 (sm_86) too.
     image: vllm/vllm-openai:v0.26.0
     restart: unless-stopped
-    ipc: host # required by vLLM for shared-memory tensor transport between workers
+    ipc: host
     environment:
       HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
-      # vLLM force-disables pinned memory (and with it, UVA) whenever it
-      # detects it's running under WSL2, unless this is set — see
-      # vllm/platforms/cuda.py::is_pin_memory_available(). Without it,
-      # engine init crashes with "RuntimeError: UVA is not available" on
-      # any Docker Desktop / WSL2 host, regardless of GPU. Requires WSL2
-      # kernel >= 4.19.121 (check with `wsl uname -r` on the host).
+      # Required when Docker Desktop uses WSL2 backend.
       VLLM_WSL2_ENABLE_PIN_MEMORY: "1"
     volumes:
       - huggingface_cache:/root/.cache/huggingface
+    # Defaults tuned for RTX 2050 4GB — override in .env
     command:
-      - --model=${VLLM_MODEL}
-      - --served-model-name=${VLLM_SERVED_NAME}
-      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
-      - --max-model-len=${VLLM_MAX_MODEL_LEN:-4096}
+      - --model=${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct-AWQ}
+      - --served-model-name=${VLLM_SERVED_NAME:-qwen2.5-1.5b}
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.70}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-2048}
+      - --max-num-seqs=${VLLM_MAX_NUM_SEQS:-4}
+      - --enforce-eager
+      - --dtype=auto
       - --host=0.0.0.0
       - --port=8000
     ports:
@@ -87,30 +47,29 @@ services:
       interval: 30s
       timeout: 10s
       retries: 10
-      # First boot downloads the model from HuggingFace before the server
-      # can come up; give it plenty of room before healthcheck failures count.
       start_period: 600s
 
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       vllm:
         condition: service_healthy
+    # Reach Postgres installed on the Windows/macOS/Linux host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      # Host Postgres "litellm" DB (must already exist + accept Docker connections).
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@host.docker.internal:${POSTGRES_PORT:-5432}/litellm
+      # Used by litellm/config.yaml → model_list[].litellm_params.api_base
+      VLLM_API_BASE: http://vllm:8000/v1
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     ports:
       - "${LITELLM_PORT:-4000}:4000"
     healthcheck:
-      # The litellm image (chainguard/wolfi-base) has no curl/wget, but does
-      # ship python3 — use it to hit the readiness endpoint, which also
-      # verifies the postgres connection is working.
       test:
         [
           "CMD",
@@ -121,128 +80,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 30s
-
-  # RAG embedding service — vectorizes document chunks for Qdrant. GPU-first
-  # with automatic CPU fallback (embedding/app/embedder.py): it probes free
-  # VRAM at startup and only uses CUDA when there's room, otherwise CPU. On
-  # this project's 4GB laptop card the chat model keeps ~3GB busy, so the
-  # probe picks CPU and vLLM stays untouched.
-  #
-  # NOTE for non-GPU hosts: if you don't have the nvidia container toolkit,
-  # delete the whole `deploy:` block below — the service then runs on CPU
-  # only (which is exactly the fallback path).
-  embedding:
-    build:
-      context: ./embedding
-    restart: unless-stopped
-    environment:
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
-      EMBEDDING_DIM: ${EMBEDDING_DIM:-384}
-      # auto = GPU if CUDA is present AND free VRAM >= threshold.
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-auto}
-      EMBEDDING_GPU_MIN_FREE_MB: ${EMBEDDING_GPU_MIN_FREE_MB:-1536}
-      HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN:-}
-    volumes:
-      - huggingface_cache:/root/.cache/huggingface
-    ports:
-      - "${EMBEDDING_PORT:-8002}:8002"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python3",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')",
-        ]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      # First boot downloads the embedding model from HuggingFace.
-      start_period: 300s
-
-  # Express + PostgreSQL API. Replaces the old Next.js dashboard's backend
-  # (removed — see git history for the prior monolith).
-  backend:
-    build:
-      context: ./backend
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      litellm:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-    environment:
-      # "postgres"/"litellm"/"qdrant"/"embedding" are compose network hostnames;
-      # backend/.env uses localhost instead for running commands on the host.
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/dashboard
-      JWT_SECRET: ${JWT_SECRET}
-      LITELLM_BASE_URL: http://litellm:4000
-      # Used server-side only to call LiteLLM's admin API — never sent to
-      # any client.
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-      QDRANT_URL: http://qdrant:6333
-      EMBEDDING_BASE_URL: http://embedding:8002
-      PORT: 4001
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
-    ports:
-      - "${API_PORT:-4001}:4001"
-    healthcheck:
-      # node:22-slim has neither curl nor wget — use Node's own global
-      # fetch (Node 18+) against a dependency-free route so this only
-      # verifies the Express server itself is serving, not the DB/auth.
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://localhost:4001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-
-  # React (Vite) frontend — talks only to backend/ for account/key/usage data,
-  # and points its own /docs examples at litellm directly for inference.
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        # Baked into the static bundle at build time (browser-facing URLs —
-        # the browser runs on the host, so it uses the same published
-        # localhost ports as everything else, not compose network hostnames).
-        VITE_API_BASE_URL: http://localhost:${API_PORT:-4001}
-        VITE_LITELLM_BASE_URL: http://localhost:${LITELLM_PORT:-4000}
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "${WEB_PORT:-5173}:5173"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://localhost:5173/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      start_period: 45s
 
 volumes:
-  postgres_data:
-  qdrant_data:
   huggingface_cache:

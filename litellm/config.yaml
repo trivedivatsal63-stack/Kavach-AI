@@ -1,38 +1,26 @@
-# LiteLLM proxy config — routes requests to the self-hosted vLLM inference
-# engine and persists keys/spend/usage to the "litellm" postgres database.
-# Docs: https://docs.litellm.ai/docs/proxy/configs
+# LiteLLM proxy — keys/budgets/spend in host Postgres "litellm" DB.
+# When running via docker compose, VLLM_API_BASE=http://vllm:8000/v1
+# (compose network). Backend on the host still talks to LiteLLM at
+# http://localhost:4000.
 
 model_list:
-  - model_name: qwen2.5-1.5b # public name clients call in "model": "..."
+  - model_name: qwen2.5-1.5b
     litellm_params:
-      model: openai/qwen2.5-1.5b # openai/<served-model-name> tells LiteLLM to speak the OpenAI protocol
-      api_base: http://vllm:8000/v1 # vLLM's OpenAI-compatible endpoint, reached over the compose network
-      api_key: not-needed # vLLM has no auth of its own; LiteLLM requires a placeholder value
-      # This model isn't in LiteLLM's built-in cost map (it's self-hosted,
-      # there's no per-token vendor price), so without these every request
-      # computes $0.00 spend and no credit/max_budget check can ever fire.
-      # Placeholder rates only, deliberately high so a couple of requests
-      # are enough to demonstrate real budget enforcement — not real
-      # economics. Replace with actual figures before this matters for money.
+      model: openai/qwen2.5-1.5b
+      api_base: os.environ/VLLM_API_BASE
+      api_key: not-needed
+      # Placeholder rates so budget/spend work for self-hosted models.
       input_cost_per_token: 0.0001
       output_cost_per_token: 0.0002
 
 litellm_settings:
-  drop_params: true # silently drop OpenAI params vLLM doesn't support instead of erroring
+  drop_params: true
   default_key_generate_params:
-    # Placeholder ceilings applied to any /key/generate call that doesn't
-    # override them. backend/ (src/routes/keys.ts) always passes its own
-    # max_budget per user when provisioning keys; these are the fallback
-    # for any other direct caller.
     rpm_limit: 20
     max_budget: 5.0
     budget_duration: "30d"
 
 general_settings:
-  master_key: os.environ/LITELLM_MASTER_KEY # required to hit /key/generate and other admin endpoints
-  database_url: os.environ/DATABASE_URL # postgres connection string, "litellm" database
-  store_model_in_db: true # allow models to be added/edited via API/UI, not just this file
-  # disable_spend_logs defaults to false, so every request's cost/usage is
-  # written to the LiteLLM_SpendLogs table automatically — this is what
-  # backend/'s GET /usage (src/litellm.ts, getLiteLLMKeyUsage) reads via
-  # /spend/logs/v2.
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true

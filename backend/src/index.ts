@@ -1,32 +1,51 @@
-import express from "express";
-import cors from "cors";
-import { authRouter } from "./routes/auth";
-import { keysRouter } from "./routes/keys";
-import { usageRouter } from "./routes/usage";
-import { creditsRouter } from "./routes/credits";
-import { ragRouter } from "./dynamic-rag-functionality/2026-08-06";
+import "dotenv/config";
+import { createApp } from "./app";
+import { env } from "./config";
+import { assertDatabaseConnection, prisma } from "./models/prisma";
+import { ensureSchema } from "./models/rag/pool";
+import { markInterruptedAsFailed } from "./services/rag/documents.service";
+import { ensureCollection } from "./services/rag/qdrant.service";
 
-const app = express();
-const PORT = process.env.PORT ?? 4001;
-const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://localhost:5173";
+async function bootstrap() {
+  try {
+    await assertDatabaseConnection();
+    await ensureSchema();
+    await markInterruptedAsFailed();
+    console.log(`[db] Connected to Postgres (${maskDbUrl(env.databaseUrl)})`);
+  } catch (err) {
+    console.error("[db] Postgres connection FAILED:", err);
+    console.error(
+      "[db] Check backend/.env DATABASE_URL (use 127.0.0.1), that the postgres service is running, and that database \"dashboard\" exists."
+    );
+    await prisma.$disconnect().catch(() => {});
+    process.exit(1);
+  }
 
-app.use(cors({ origin: CORS_ORIGIN }));
-app.use(express.json());
+  try {
+    await ensureCollection();
+    console.log("[rag] Qdrant collection ready");
+  } catch (err) {
+    console.warn(
+      `[rag] Qdrant not running on ${env.qdrantUrl} — RAG unavailable; auth/keys still work.`
+    );
+    console.warn(String(err));
+  }
 
-// Dependency-free — only confirms the server itself is up.
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
-});
+  const app = createApp();
+  app.listen(env.port, () => {
+    console.log(`API listening on port ${env.port}`);
+    console.log(`LiteLLM gateway expected at ${env.litellmBaseUrl}`);
+  });
+}
 
-app.use("/auth", authRouter);
-app.use("/keys", keysRouter);
-app.use("/usage", usageRouter);
-app.use("/credits", creditsRouter);
+function maskDbUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.password) u.password = "***";
+    return u.toString();
+  } catch {
+    return "(invalid DATABASE_URL)";
+  }
+}
 
-// RAG module (dynamic-rag-functionality/2026-08-06) — mounts its own
-// /rag/* routes and the public /v1/rag/query endpoint.
-app.use(ragRouter);
-
-app.listen(PORT, () => {
-  console.log(`API listening on port ${PORT}`);
-});
+void bootstrap();

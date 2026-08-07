@@ -1,111 +1,64 @@
-# ai-api-platform
+# Kavach-AI
 
-A self-hosted AI API platform: a local vLLM inference engine sitting
-behind LiteLLM as an OpenAI-compatible gateway (key issuance, budgets,
-spend/usage tracking), with a small Express API and a React dashboard on
-top for account signup, API key management, credit balance, and usage
-analytics.
+Self-hosted AI API platform: **vLLM** (inference) + **LiteLLM** (keys/budgets/spend) + Express API + React dashboard.
+
+## Hybrid run mode
+
+| Service | Where it runs |
+|---------|----------------|
+| **vLLM** + **LiteLLM** | Docker (`docker compose up -d`) |
+| Postgres, Qdrant, embedding, backend, frontend | Local terminals |
 
 ```
-Browser → frontend (:5173, React/Vite dashboard)
-              → backend (:4001, Express: auth, keys, credits, usage)
-                    → LiteLLM (:4000, admin API: /key/generate, /key/info, /spend/logs/v2, ...)
-client apps  → LiteLLM (:4000, OpenAI-compatible: /v1/chat/completions)
-                    → vLLM (:8000, OpenAI-compatible, runs the actual model on GPU)
-
-Postgres (:5432) — "litellm" db (LiteLLM's own keys/spend/usage state)
-                  — "dashboard" db (backend/'s User + ApiKey tables)
+Browser → frontend :5173 → backend :4001 → LiteLLM :4000 (Docker) → vLLM :8000 (Docker)
+Host Postgres :5432  ← LiteLLM (via host.docker.internal) + backend
 ```
 
-`frontend` never talks to LiteLLM directly for account/key data, and `backend`
-never maintains its own usage ledger — LiteLLM stays the single source of
-truth for spend, budgets, and usage; `backend` only reads it and drives real
-LiteLLM key budgets from each user's credit balance.
-
-## Prerequisites
-
-- **Docker** with Docker Compose v2 (`docker compose`, not `docker-compose`).
-- **NVIDIA Container Toolkit**, so Docker can pass the GPU into the vLLM
-  container. Verify it works before running this stack:
-
-  ```bash
-  docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
-  ```
-
-  If that doesn't print your GPU, fix that first — vLLM will not start
-  without it. See your OS's NVIDIA Container Toolkit install docs if the
-  command above fails.
-- An NVIDIA GPU with enough VRAM for the configured model. The default
-  (`Qwen/Qwen2.5-1.5B-Instruct`, unquantized, `--max-model-len=4096`) fits
-  in 8GB (e.g. RTX 5060).
-- Enough disk space for the model cache — a few GB per model, persisted in
-  the `huggingface_cache` volume so it isn't re-downloaded on every restart.
+Full steps: [`scripts/LOCAL_RUN.md`](scripts/LOCAL_RUN.md)
 
 ## Quick start
 
-```bash
-cp .env.example .env
-# edit .env — at minimum set POSTGRES_PASSWORD, LITELLM_MASTER_KEY,
-# JWT_SECRET
+```powershell
+# 1) Env
+copy .env.example .env
+copy backend\.env.example backend\.env
+copy frontend\.env.example frontend\.env
+# set POSTGRES_PASSWORD / JWT_SECRET / LITELLM_MASTER_KEY
 
+# 2) Host DBs (once): litellm + dashboard — then:
+cd backend
+npm install
+npx prisma db push
+
+# 3) Docker inference only
+cd ..
 docker compose up -d
-docker compose logs -f vllm      # first boot downloads the model; watch until "Application startup complete"
-docker compose ps                # confirm all five show (healthy)
+
+# 4) Local API + UI
+cd backend; npm run dev
+# other terminal:
+cd frontend; npm run dev
 ```
 
-Then open `http://localhost:5173` and sign up — that creates an account
-with a $5.00 mock credit balance, from which you can generate a real
-LiteLLM API key and use it against `http://localhost:4000/v1/chat/completions`.
+## How you reach vLLM
 
-To drive LiteLLM directly instead (e.g. for scripting):
+Apps call **LiteLLM** on `:4000`. LiteLLM (in Docker) forwards to **vLLM** at `http://vllm:8000/v1` on the compose network. Do not point clients at `:8000` directly.
 
-```bash
-curl -s http://localhost:4000/key/generate \
-  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{}'
+## Backend layout (MVC + services)
 
-curl -s http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer <key-from-above>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "qwen2.5-1.5b",
-    "messages": [{"role": "user", "content": "Say hello in one sentence."}]
-  }'
+```
+backend/src/
+  routes/  controllers/  services/  models/  middleware/  config/
 ```
 
 ## Ports
 
-| Port | Service    | What it serves                                                                                    |
-| ---- | ---------- | -------------------------------------------------------------------------------------------------- |
-| 5173 | frontend  | React dashboard — signup/login, API key management, credit balance/top-up, usage                  |
-| 4001 | backend   | Express API backing `frontend` — `/auth`, `/keys`, `/credits`, `/usage` (JWT-protected)               |
-| 4000 | LiteLLM    | OpenAI-compatible gateway (`/v1/chat/completions`) and admin API (`/key/generate`, `/spend/logs/v2`, ...) |
-| 8000 | vLLM       | Raw OpenAI-compatible inference API — not meant for direct client use, only LiteLLM routes to it   |
-| 5432 | Postgres   | `litellm` db (LiteLLM's own state) and `dashboard` db (`backend/`'s User + ApiKey tables)             |
-
-## Notes
-
-- The vLLM image tag is pinned to `v0.26.0` (released 2026-07-27), the
-  first stable release confirmed to build with `TORCH_CUDA_ARCH_LIST`
-  including `12.0` (sm_120, Blackwell/RTX 50-series) on a CUDA 13.0.2 base —
-  well above the CUDA 12.8 floor Blackwell requires. Don't downgrade this
-  tag on a 50-series GPU without re-checking `docker/versions.json` at the
-  target tag.
-- `store_model_in_db: true` in `litellm/config.yaml` lets models be
-  added/edited via LiteLLM's API without redeploying this stack.
-- `litellm/config.yaml`'s per-token `input_cost_per_token`/
-  `output_cost_per_token` are placeholder rates, not real economics — the
-  model has no entry in LiteLLM's built-in cost map (it's self-hosted), so
-  without them every request would compute $0.00 spend and budget
-  enforcement could never fire.
-- `backend/` generates each key's real LiteLLM `max_budget` from the user's
-  current `creditBalanceUsd` at generation time, and updates it again on
-  every mock credit top-up — the credit balance is enforced by LiteLLM
-  itself, not just displayed.
-- `frontend/`'s JWT is kept in memory only (React state, no localStorage) —
-  safer against XSS than localStorage, at the cost of losing the session
-  on a hard page reload. An httpOnly cookie would be the further
-  improvement, but requires `backend/` to set it.
-- The original Next.js dashboard (Phase 1–4) was replaced by `backend/` +
-  `frontend/`; see git history for the removed monolith if needed.
+| Port | Service |
+|------|---------|
+| 5173 | frontend (host) |
+| 4001 | backend (host) |
+| 4000 | LiteLLM (Docker) |
+| 8000 | vLLM (Docker) |
+| 8002 | embedding (host, RAG) |
+| 6333 | Qdrant (host, RAG) |
+| 5432 | Postgres (host) |
