@@ -1,16 +1,26 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { User } from "../lib/api";
+import {
+  clearAuth,
+  getJwtExpiryUnix,
+  isJwtExpired,
+  loadAuth,
+  saveAuth,
+} from "../lib/authStorage";
 
-// Deliberately in-memory only — no localStorage/sessionStorage. A page
-// reload logs the user out and they land back on /login. This trades UX
-// (session doesn't survive a refresh) for real XSS resistance: a script
-// injected anywhere on the page cannot read the JWT out of storage, since
-// there's no storage to read. See the README for why this was chosen over
-// an httpOnly cookie (the actually-ideal option, but one that requires
-  // backend/ to set the cookie itself — out of scope for this phase).
 interface AuthContextValue {
   token: string | null;
   user: User | null;
+  /** True after localStorage hydrate on first paint. */
+  ready: boolean;
   setAuth: (token: string, user: User) => void;
   updateUser: (user: User) => void;
   logout: () => void;
@@ -21,26 +31,71 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [ready, setReady] = useState(false);
 
-  function setAuth(newToken: string, newUser: User) {
-    setToken(newToken);
-    setUser(newUser);
-  }
-
-  function updateUser(newUser: User) {
-    setUser(newUser);
-  }
-
-  function logout() {
+  const logout = useCallback(() => {
+    clearAuth();
     setToken(null);
     setUser(null);
-  }
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ token, user, setAuth, updateUser, logout }}>
-      {children}
-    </AuthContext.Provider>
+  // Hydrate from localStorage once on mount.
+  useEffect(() => {
+    const stored = loadAuth();
+    if (stored) {
+      setToken(stored.token);
+      setUser(stored.user);
+    }
+    setReady(true);
+  }, []);
+
+  // Auto-logout when the JWT reaches its 7h expiry.
+  useEffect(() => {
+    if (!token) return;
+    if (isJwtExpired(token)) {
+      logout();
+      return;
+    }
+    const exp = getJwtExpiryUnix(token);
+    if (exp == null) {
+      logout();
+      return;
+    }
+    const ms = exp * 1000 - Date.now();
+    const id = window.setTimeout(() => logout(), Math.max(ms, 0));
+    return () => window.clearTimeout(id);
+  }, [token, logout]);
+
+  // Backend 401 → clear stored JWT and bounce to login.
+  useEffect(() => {
+    function onUnauthorized() {
+      logout();
+    }
+    window.addEventListener("kavach:unauthorized", onUnauthorized);
+    return () =>
+      window.removeEventListener("kavach:unauthorized", onUnauthorized);
+  }, [logout]);
+
+  const setAuth = useCallback((newToken: string, newUser: User) => {
+    saveAuth(newToken, newUser);
+    setToken(newToken);
+    setUser(newUser);
+  }, []);
+
+  const updateUser = useCallback(
+    (newUser: User) => {
+      setUser(newUser);
+      if (token) saveAuth(token, newUser);
+    },
+    [token]
   );
+
+  const value = useMemo(
+    () => ({ token, user, ready, setAuth, updateUser, logout }),
+    [token, user, ready, setAuth, updateUser, logout]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

@@ -69,6 +69,11 @@ async function request<T>(
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // Signal expired/invalid session so callers (and AuthContext consumers)
+    // can clear localStorage JWT.
+    if (res.status === 401 && token) {
+      window.dispatchEvent(new CustomEvent("kavach:unauthorized"));
+    }
     throw new ApiError(
       res.status,
       (data as { error?: string }).error ?? `Request failed with status ${res.status}`
@@ -233,6 +238,9 @@ export function ragUploadWithProgress(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(data as { document: RagDocument });
       } else {
+        if (xhr.status === 401 && token) {
+          window.dispatchEvent(new CustomEvent("kavach:unauthorized"));
+        }
         reject(
           new ApiError(
             xhr.status,

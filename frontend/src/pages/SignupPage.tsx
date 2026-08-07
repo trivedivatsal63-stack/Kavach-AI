@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, Navigate } from "react-router-dom";
 import { signup, ApiError } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { Layout } from "../components/Layout";
@@ -7,20 +7,24 @@ import { AuthCard } from "../components/AuthCard";
 
 export function SignupPage() {
   const navigate = useNavigate();
-  const { setAuth } = useAuth();
+  const { setAuth, token, ready } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  if (ready && token) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setPending(true);
     try {
-      const { token, user } = await signup(email, password, name);
-      setAuth(token, user);
+      const { token: jwt, user } = await signup(email, password, name);
+      setAuth(jwt, user);
       navigate("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");

@@ -7,7 +7,8 @@ export interface JwtPayload {
 }
 
 export function signJwt(payload: JwtPayload): string {
-  return jwt.sign(payload, env.jwtSecret(), { expiresIn: "7d" });
+  // Session lifetime for dashboard JWT (Bearer). Clients store this in localStorage.
+  return jwt.sign(payload, env.jwtSecret(), { expiresIn: "7h" });
 }
 
 declare global {
