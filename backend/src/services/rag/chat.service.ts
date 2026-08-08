@@ -1,5 +1,7 @@
 import { retrieve } from "./retrieval.service";
 import { completeChat } from "./completion.service";
+import { countTokens } from "./tokenizer.service";
+import { formatContext } from "./citationFormat";
 import type { Citation, RagChatResult } from "../../models/rag/types";
 
 // Retrieval-augmented answer: search the user's vectors, stuff the top
@@ -8,28 +10,63 @@ import type { Citation, RagChatResult } from "../../models/rag/types";
 // so generating an answer consumes the same credit pool as any other key.
 
 const SYSTEM_PROMPT =
-  "You are a document-assistant answering questions about the user's uploaded " +
-  "documents. Use ONLY the provided context. The numbered chunks vary in " +
-  "relevance — trust the highest-match chunks and ignore unrelated ones. " +
+  "You are a document-assistant answering questions strictly from the user's " +
+  "uploaded documents. Answer using ONLY facts explicitly stated in the " +
+  "numbered context chunks below — never fill a gap from your own general " +
+  "knowledge or training data, even if you are confident it's correct. This " +
+  "matters especially for legal, regulatory, and financial documents, where a " +
+  "plausible-sounding but wrong number or section reference is worse than no " +
+  "answer at all. " +
+  "The chunks vary in relevance — trust the highest-match ones and ignore " +
+  "unrelated ones. Do not blend details from chunks that cover different " +
+  "sections, clauses, or provisions into one composite answer: only combine " +
+  "information across chunks when they are actually discussing the same " +
+  "provision. If the chunks that mention your topic are really about a " +
+  "different section, treat that as context not containing the answer, not as " +
+  "raw material to stitch one together. " +
+  "If the retrieved context doesn't clearly and fully support an answer, say so " +
+  "plainly, in your own words, instead of guessing, extrapolating, or hedging " +
+  "with a number anyway — a direct 'the retrieved documents don't contain that' " +
+  "is the right answer in that case, not a best-effort guess. " +
+  "When you do answer, name the exact section, clause, or provision number as " +
+  "it appears in the context — never invent, approximate, or 'round' a section " +
+  "number to one that sounds right. " +
   "Citation and reference entries (footnotes, bibliographies, publisher names, " +
   "journal details) are NOT answers: never present a publisher or a reference " +
-  "string as the author or title of a document. If the context does not contain " +
-  "the answer, say you couldn't find it in the documents instead of guessing. " +
+  "string as the author or title of a document. " +
   "Cite your sources with [n] matching the numbered context. Keep the answer " +
   "concise.";
+
+// Cached for the process lifetime, not hardcoded — if SYSTEM_PROMPT's wording
+// ever changes, the next process restart re-measures it automatically rather
+// than the token budget silently drifting from what's actually being sent.
+let cachedSystemPromptTokens: number | null = null;
+async function getSystemPromptTokenCount(): Promise<number> {
+  if (cachedSystemPromptTokens === null) {
+    cachedSystemPromptTokens = await countTokens(SYSTEM_PROMPT);
+  }
+  return cachedSystemPromptTokens;
+}
 
 export async function answerQuestion(input: {
   userId: string;
   question: string;
   apiKey: string;
   documentIds?: string[];
-  limit?: number;
 }): Promise<RagChatResult> {
+  // What retrieve()'s token-budget cutoff needs to know: how many tokens
+  // this call's prompt scaffolding already commits, before any chunk content
+  // is added. Measured with an empty Context placeholder so the wrapper
+  // template's own tokens are counted alongside the real question text.
+  const systemTokens = await getSystemPromptTokenCount();
+  const wrapperTokens = await countTokens(`Context:\n\n\nQuestion:\n${input.question}`);
+  const reservedTokens = systemTokens + wrapperTokens;
+
   const citations: Citation[] = await retrieve({
     userId: input.userId,
     query: input.question,
     documentIds: input.documentIds,
-    limit: input.limit,
+    reservedTokens,
   });
 
   if (citations.length === 0) {
@@ -41,16 +78,7 @@ export async function answerQuestion(input: {
     };
   }
 
-  const context = citations
-    .map((c, i) => {
-      const location = [
-        c.source,
-        ...(c.headingPath && c.headingPath.length > 0 ? c.headingPath : []),
-      ].join(" > ");
-      const match = Math.round(c.score * 100);
-      return `[${i + 1}] ${location} — match ${match}%\n${c.excerpt}`;
-    })
-    .join("\n\n");
+  const context = formatContext(citations);
 
   const completion = await completeChat(
     input.apiKey,

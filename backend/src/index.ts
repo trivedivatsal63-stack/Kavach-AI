@@ -4,7 +4,7 @@ import { env } from "./config";
 import { assertDatabaseConnection, prisma } from "./models/prisma";
 import { ensureSchema } from "./models/rag/pool";
 import { markInterruptedAsFailed } from "./services/rag/documents.service";
-import { ensureCollection } from "./services/rag/qdrant.service";
+import { pingQdrant } from "./services/rag/qdrant.service";
 import { purgeLegacyNonUuidUsers } from "./jobs/purgeLegacyUsers";
 
 async function bootstrap() {
@@ -24,8 +24,8 @@ async function bootstrap() {
   }
 
   try {
-    await ensureCollection();
-    console.log("[rag] Qdrant collection ready");
+    await pingQdrant();
+    console.log("[rag] Qdrant reachable");
   } catch (err) {
     console.warn(
       `[rag] Qdrant not running on ${env.qdrantUrl} — RAG unavailable; auth/keys still work.`

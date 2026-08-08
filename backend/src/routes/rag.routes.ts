@@ -16,6 +16,7 @@ documentsRouter.post(
     type: [
       "application/pdf",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "text/plain",
       "text/markdown",
       "application/octet-stream",

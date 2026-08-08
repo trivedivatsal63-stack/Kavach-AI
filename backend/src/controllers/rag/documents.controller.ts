@@ -44,7 +44,7 @@ export async function upload(req: Request, res: Response, next: NextFunction) {
     ) {
       throw new AppError(
         400,
-        "Unsupported file type. Allowed: PDF, DOCX, TXT, Markdown."
+        "Unsupported file type. Allowed: PDF, DOCX, XLSX, TXT, Markdown."
       );
     }
 
@@ -120,6 +120,8 @@ function guessMimeFromName(name: string): string {
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".docx"))
     return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".xlsx"))
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "text/markdown";
   if (lower.endsWith(".txt")) return "text/plain";
   return "application/octet-stream";

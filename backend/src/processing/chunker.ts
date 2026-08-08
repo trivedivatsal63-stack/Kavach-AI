@@ -4,6 +4,7 @@ import {
   MAX_OVERLAP_CHARS,
   MIN_CHUNK_CHARS,
 } from "../utils/rag.constants";
+import type { StructuredBlock } from "./types";
 
 export interface Chunk {
   content: string;
@@ -35,7 +36,9 @@ interface AssembledChunk {
   headingPath: string[];
 }
 
-// Structure-aware chunker. It reads the document as a heading tree:
+// Structure-aware chunker for formats with no real structure to lean on
+// (PDF, TXT, MD) — it reads the flat text as a heading tree via regex
+// heuristics:
 //   - Markdown ATX headings (#/##/...), numbered headings (1., 1.1.) and
 //     standalone ALL-CAPS lines become section boundaries.
 //   - Content under the current section groups into chunks of up to
@@ -45,14 +48,78 @@ interface AssembledChunk {
 //     and are hard-split only if a single table exceeds the limit.
 //   - Each chunk carries its heading path + source metadata for citation.
 //
+// This heuristic path is deliberate and revisitable, not an oversight: PDF
+// extraction (pdf-parse) has no structure to preserve in the first place, so
+// there is nothing better to hand this function today. Formats that DO carry
+// real structure (DOCX) skip this heuristic entirely — see
+// chunkStructuredBlocks below, which drives the same packing/overlap logic
+// from real headings/tables instead of guessing them back from flat text.
+//
 // pageCount is accepted for future per-page extraction; pdf-parse gives us
 // whole-document text without page markers, so chunk-level pages are null
 // for now (kept in the schema so a better parser can fill them in).
 export function chunkDocument(input: ChunkingInput): Chunk[] {
   const lines = input.text.replace(/\r\n/g, "\n").split("\n");
-  const blocks = buildBlocks(lines);
-  const assembled = assembleChunks(blocks);
+  return finalizeChunks(assembleChunks(buildBlocks(lines)));
+}
 
+// DOCX (and any future format that exposes real structure) — no heading/
+// table detection needed, the source already told us what's a heading, a
+// table, a paragraph, a list item. Reuses the exact same reference/junk
+// filtering (filterBlockContent) and packing (assembleChunks) as the regex
+// path so both formats chunk with identical semantics.
+export function chunkStructuredBlocks(structured: StructuredBlock[]): Chunk[] {
+  const stack: Heading[] = [];
+  const blocks: Block[] = [];
+  let listCounter = 0;
+
+  for (let i = 0; i < structured.length; i++) {
+    const item = structured[i];
+
+    if (item.kind === "heading") {
+      while (stack.length > 0 && stack[stack.length - 1].level >= item.level) {
+        stack.pop();
+      }
+      stack.push({ level: item.level, text: item.text });
+      continue;
+    }
+
+    const headingPath = stack.map((h) => h.text);
+
+    if (item.kind === "paragraph") {
+      const block = filterBlockContent(headingPath, item.text, "paragraph");
+      if (block) blocks.push(block);
+      continue;
+    }
+
+    if (item.kind === "list-item") {
+      const prev = structured[i - 1];
+      listCounter =
+        item.ordered && prev?.kind === "list-item" && prev.ordered
+          ? listCounter + 1
+          : 1;
+      const prefix = item.ordered ? `${listCounter}.` : "-";
+      const block = filterBlockContent(
+        headingPath,
+        `${prefix} ${item.text}`,
+        "paragraph"
+      );
+      if (block) blocks.push(block);
+      continue;
+    }
+
+    if (item.kind === "table") {
+      const tableText = item.rows.map((row) => row.join(" | ")).join("\n");
+      const block = filterBlockContent(headingPath, tableText, "table");
+      if (block) blocks.push(block);
+      continue;
+    }
+  }
+
+  return finalizeChunks(assembleChunks(blocks));
+}
+
+function finalizeChunks(assembled: AssembledChunk[]): Chunk[] {
   return assembled.map((chunk) => ({
     content: withHeadingPrefix(chunk.headingPath, chunk.text),
     headingPath: chunk.headingPath,
@@ -70,45 +137,58 @@ function withHeadingPrefix(headingPath: string[], text: string): string {
   return `${headingPath.join(" / ")}\n\n${text}`;
 }
 
+// Shared by both the regex-heuristic path (buildBlocks) and the structured
+// path (chunkStructuredBlocks): drops junk-section/reference-block noise
+// identically regardless of how the caller learned the heading path and raw
+// text. kindHint lets a caller that already KNOWS a block is a real table
+// (structured path) skip the isTable() line-heuristic entirely.
+function filterBlockContent(
+  headingPath: string[],
+  rawText: string,
+  kindHint?: BlockKind
+): Block | null {
+  const raw = rawText.trim();
+  if (!raw) return null;
+
+  // Junk sections (endnotes/bibliography) are metadata, not content. Drop
+  // the reference lines but KEEP any non-reference lines that follow the
+  // section without a heading boundary — e.g. a book's acknowledgements and
+  // the publishing/copyright page that come right after its endnotes.
+  if (isJunkSection(headingPath)) {
+    const kept = raw
+      .split("\n")
+      .filter((line) => !looksLikeReferenceLine(line))
+      .join("\n")
+      .trim();
+    if (!kept) return null;
+    return {
+      kind: kindHint ?? (isTable(kept) ? "table" : "paragraph"),
+      text: kept,
+      headingPath,
+    };
+  }
+
+  const kind = kindHint ?? (isTable(raw) ? "table" : "paragraph");
+
+  // Citation-heavy blocks (footnote pages that have no heading of their own)
+  // are noise and must not pollute retrieval. A real table is never mistaken
+  // for a reference block.
+  if (kind !== "table" && isReferenceBlock(raw)) return null;
+
+  return { kind, text: raw, headingPath };
+}
+
 function buildBlocks(lines: string[]): Block[] {
   const blocks: Block[] = [];
   const stack: Heading[] = [];
   let buffer: string[] = [];
 
   const flushBuffer = () => {
-    const raw = buffer.join("\n").trim();
+    const raw = buffer.join("\n");
     buffer = [];
-    if (!raw) return;
     const headingPath = stack.map((h) => h.text);
-
-    // Junk sections (endnotes/bibliography) are metadata, not content. Drop
-    // the reference lines but KEEP any non-reference lines that follow the
-    // section without a heading boundary — e.g. a book's acknowledgements and
-    // the publishing/copyright page that come right after its endnotes.
-    if (isJunkSection(headingPath)) {
-      const kept = raw
-        .split("\n")
-        .filter((line) => !looksLikeReferenceLine(line))
-        .join("\n")
-        .trim();
-      if (!kept) return;
-      blocks.push({
-        kind: isTable(kept) ? "table" : "paragraph",
-        text: kept,
-        headingPath,
-      });
-      return;
-    }
-
-    // Citation-heavy blocks (footnote pages that have no heading of their
-    // own) are noise and must not pollute retrieval.
-    if (!isTable(raw) && isReferenceBlock(raw)) return;
-
-    blocks.push({
-      kind: isTable(raw) ? "table" : "paragraph",
-      text: raw,
-      headingPath,
-    });
+    const block = filterBlockContent(headingPath, raw);
+    if (block) blocks.push(block);
   };
 
   for (let i = 0; i < lines.length; i++) {

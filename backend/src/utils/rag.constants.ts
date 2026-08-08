@@ -42,6 +42,7 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 export const ALLOWED_UPLOAD_MIMES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "text/plain",
   "text/markdown",
 ] as const;
@@ -52,7 +53,18 @@ export type AllowedUploadMime = (typeof ALLOWED_UPLOAD_MIMES)[number];
 // service request bodies reasonable.
 export const EMBED_BATCH_SIZE = 32;
 
-export const DEFAULT_RETRIEVAL_LIMIT = 6;
+// Must match vllm's --max-model-len (docker-compose.yml / VLLM_MAX_MODEL_LEN
+// in the root .env) — this is the hard ceiling the dynamic token-budget
+// retrieval cutoff in retrieval.service.ts is built around. Update both
+// together; a mismatch here silently reintroduces context-overflow risk.
+export const MODEL_MAX_CONTEXT_TOKENS = 2048;
+
+// Headroom reserved for the model's actual answer. Without this the token
+// budget would greedily fill with retrieved context and leave no room to
+// respond — LiteLLM computes the remaining output budget as
+// max_model_len - input_tokens, so a tight/zero reserve here risks a
+// truncated or empty answer even when the input alone technically fits.
+export const OUTPUT_TOKEN_RESERVE = 300;
 
 // Vectors scoring below this (Qdrant cosine similarity) are treated as noise
 // and dropped. Paraphrase-MiniLM scores relevant chunks well above 0.25 and
