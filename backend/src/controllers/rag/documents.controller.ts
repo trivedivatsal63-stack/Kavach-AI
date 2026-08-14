@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from "express";
 import { enqueueIngestion } from "../../jobs/ingestion.queue";
 import {
   createDocument,
+  getDocument,
+  listChunksForDocument,
   listDocuments,
 } from "../../services/rag/documents.service";
 import { deleteDocument } from "../../services/rag/retrieval.service";
@@ -81,6 +83,23 @@ export async function list(req: Request, res: Response, next: NextFunction) {
   } catch (err) {
     console.error("GET /rag/documents failed:", err);
     next(new AppError(500, "Failed to list documents."));
+  }
+}
+
+export async function listChunks(req: Request, res: Response, next: NextFunction) {
+  try {
+    const doc = await getDocument(req.userId!, String(req.params.id));
+    if (!doc) {
+      throw new AppError(404, "Document not found.");
+    }
+    res.json({ chunks: await listChunksForDocument(req.userId!, doc.id) });
+  } catch (err) {
+    if (!(err instanceof AppError)) {
+      console.error("GET /rag/documents/:id/chunks failed:", err);
+      next(new AppError(500, "Failed to list chunks."));
+      return;
+    }
+    next(err);
   }
 }
 

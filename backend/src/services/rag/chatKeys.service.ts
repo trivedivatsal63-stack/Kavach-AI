@@ -6,12 +6,15 @@ import {
   updateLiteLLMKeyBudget,
 } from "../litellm.service";
 
-// One hidden LiteLLM key per user, used only by the platform chat UI so its
+// One hidden LiteLLM key per user, used by BOTH the general Chat UI and RAG
+// Studio (conversations.controller.ts's sendMessage, for either mode) so
 // answers are attributed to the user's real balance (the key's max_budget is
-// re-synced to the current credit balance on every chat request). Unlike
-// user-facing keys, this raw value must be recoverable server-side, so it is
-// AES-256-GCM encrypted at rest — the user never sees it and it can't be
-// revoked from the dashboard.
+// re-synced to the current credit balance on every request). Name/table
+// predate general chat — kept as-is rather than renamed (see
+// prisma/schema.prisma's RagChatKey doc comment). Unlike user-facing keys,
+// this raw value must be recoverable server-side, so it is AES-256-GCM
+// encrypted at rest — the user never sees it and it can't be revoked from
+// the dashboard.
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");

@@ -27,3 +27,33 @@ export async function countTokens(text: string): Promise<number> {
   const data = (await res.json()) as { count: number };
   return data.count;
 }
+
+export interface HistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+// Fits prior conversation turns into a fixed token budget for the next
+// completion call. Walks newest-first so the most recent (most relevant)
+// turns are kept when the conversation is longer than the budget allows,
+// stops at the first turn that would push the running total over budget —
+// never truncates a turn's content mid-message, it's whole-turn-in or
+// whole-turn-out. Returns oldest-first, ready to splice into a messages
+// array right before the new question.
+export async function trimHistoryToTokenBudget(
+  history: HistoryTurn[],
+  budgetTokens: number
+): Promise<HistoryTurn[]> {
+  const kept: HistoryTurn[] = [];
+  let used = 0;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const turn = history[i];
+    const tokens = await countTokens(turn.content);
+    if (used + tokens > budgetTokens) break;
+    kept.push(turn);
+    used += tokens;
+  }
+
+  return kept.reverse();
+}

@@ -15,3 +15,7 @@ build/
 # misc
 *.log
 .DS_Store
+
+# localfiles
+qdrant/storage/
+searxng/*.crt

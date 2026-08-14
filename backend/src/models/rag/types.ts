@@ -2,6 +2,7 @@ import {
   DOCUMENT_STATUS,
   type DOCUMENT_STATUSES,
 } from "../../utils/rag.constants";
+import type { WebCitation } from "../../services/liveSearch/types";
 
 export type DocumentStatus = (typeof DOCUMENT_STATUSES)[number];
 
@@ -64,6 +65,8 @@ export interface Citation {
 export interface RagChatResult {
   answer: string;
   citations: Citation[];
+  // Present only when webSearch was requested — see services/liveSearch/.
+  webCitations?: WebCitation[];
   usage: {
     promptTokens: number;
     completionTokens: number;

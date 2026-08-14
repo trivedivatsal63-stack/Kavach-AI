@@ -3,7 +3,10 @@ import { prisma } from "../../models/prisma";
 import { updateLiteLLMKeyBudget } from "../../services/litellm.service";
 import { resolveRagKey } from "../../services/rag/keys.service";
 import { answerQuestion } from "../../services/rag/chat.service";
-import { RagCompletionError } from "../../services/rag/completion.service";
+import {
+  CompletionError,
+  mapCompletionErrorStatus,
+} from "../../services/rag/completion.service";
 import { filterOwnedDocumentIds } from "./chat.controller";
 import { AppError } from "../../middleware/errorHandler";
 
@@ -51,12 +54,13 @@ export async function query(req: Request, res: Response, next: NextFunction) {
       question,
       documentIds,
       apiKey: rawKey,
+      webSearch: req.body?.webSearch === true,
     });
 
     res.json(result);
   } catch (err) {
-    if (err instanceof RagCompletionError) {
-      next(new AppError(mapCompletionStatus(err.status), err.message));
+    if (err instanceof CompletionError) {
+      next(new AppError(mapCompletionErrorStatus(err.status), err.message));
       return;
     }
     if (!(err instanceof AppError)) {
@@ -66,10 +70,4 @@ export async function query(req: Request, res: Response, next: NextFunction) {
     }
     next(err);
   }
-}
-
-function mapCompletionStatus(status: number): number {
-  if (status === 401) return 401;
-  if (status === 402 || status === 429) return 402;
-  return 502;
 }

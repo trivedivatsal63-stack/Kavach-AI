@@ -26,6 +26,7 @@ documentsRouter.post(
   documentsController.upload
 );
 documentsRouter.get("/", documentsController.list);
+documentsRouter.get("/:id/chunks", documentsController.listChunks);
 documentsRouter.delete("/:id", documentsController.remove);
 
 const keysRouter = Router();

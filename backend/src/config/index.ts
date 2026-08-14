@@ -55,4 +55,7 @@ export const env = {
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
   ),
   embeddingDim: positiveInt("EMBEDDING_DIM", 384),
+
+  /** Self-hosted SearXNG instance — see services/liveSearch/. */
+  searxngBaseUrl: optional("SEARXNG_URL", "http://127.0.0.1:8888"),
 } as const;

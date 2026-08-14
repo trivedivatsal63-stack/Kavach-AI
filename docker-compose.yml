@@ -1,14 +1,14 @@
-# Hybrid stack: inference + the RAG embedding service run in Docker
-# (vLLM + LiteLLM + embedding). Everything else runs on the host in separate
-# terminals: Postgres, Qdrant, backend, frontend.
+# Hybrid stack: inference, the RAG embedding service, and Qdrant run in
+# Docker (vLLM + LiteLLM + embedding + qdrant). Everything else runs on the
+# host in separate terminals: Postgres, backend, frontend.
 #
 # LiteLLM reaches:
 #   - vLLM via the compose network (http://vllm:8000/v1)
 #   - host Postgres via host.docker.internal (litellm database)
 #
-# The backend (host) reaches embedding via http://127.0.0.1:8002 — same
-# EMBEDDING_BASE_URL as when it was run by hand, since embedding now
-# publishes that port from the container.
+# The backend (host) reaches embedding via http://127.0.0.1:8002 and Qdrant
+# via http://127.0.0.1:6333 — unchanged from when both ran by hand, since
+# both containers publish those same ports.
 #
 # Usage:
 #   docker compose up -d
@@ -137,6 +137,53 @@ services:
       # timing in app/embedder.py, so this follows the "40-60s when unclear"
       # default. Tune down once real cold-start time is observed.
       start_period: 60s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      # Same on-disk data the standalone qdrant.exe was using — collections
+      # carry over unchanged, no re-ingestion needed.
+      - ./qdrant/storage:/qdrant/storage
+      - ./qdrant/snapshots:/qdrant/snapshots
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    healthcheck:
+      # No curl/wget in this image — plain TCP probe via bash's /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  searxng:
+    build:
+      context: ./searxng
+    restart: unless-stopped
+    environment:
+      # update-ca-certificates (run by the entrypoint) merges our injected
+      # Avast CA into the system bundle, but SearXNG's own Python HTTP
+      # client (httpx) uses its bundled certifi list by default and ignores
+      # that — pointing it at the system bundle explicitly is what actually
+      # makes it trust the cert. wget (used for the healthcheck) already
+      # worked without this since it reads the system store directly.
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      # /etc/searxng is __SEARXNG_CONFIG_PATH (confirmed via the image's own
+      # entrypoint.sh) — settings.yml lives here. If this directory is empty
+      # on first start, the entrypoint auto-generates settings.yml from its
+      # template with a fresh random secret_key; ours has since been edited
+      # to enable the JSON output format the backend depends on.
+      - ./searxng:/etc/searxng:rw
+    ports:
+      - "${SEARXNG_PORT:-8888}:8080"
+    healthcheck:
+      # wget is present in this image (no curl) — confirmed by inspection.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
 volumes:
   huggingface_cache:

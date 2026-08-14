@@ -309,3 +309,118 @@ export function ragRevokeKey(token: string, id: string) {
     token
   );
 }
+
+export interface RagChunkDetail {
+  id: string;
+  documentId: string;
+  chunkIndex: number;
+  headingPath: string[] | null;
+  source: string;
+  page: number | null;
+  tokenCount: number;
+  content: string;
+}
+
+export function ragListChunks(token: string, documentId: string) {
+  return request<{ chunks: RagChunkDetail[] }>(
+    `/rag/documents/${documentId}/chunks`,
+    {},
+    token
+  );
+}
+
+// ── Conversations (Chat + RAG Studio) ────────────────────────────────────
+
+export type ConversationMode = "chat" | "rag";
+
+export interface ConversationSummary {
+  id: string;
+  mode: ConversationMode;
+  title: string;
+  documentIds: string[] | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WebCitation {
+  url: string;
+  title: string;
+  excerpt: string;
+}
+
+export interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  citations: RagCitation[] | null;
+  webCitations: WebCitation[] | null;
+  createdAt: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+export interface SendMessageResponse {
+  userMessage: ConversationMessage;
+  assistantMessage: ConversationMessage;
+  conversation: ConversationSummary;
+}
+
+export function listConversations(token: string, mode: ConversationMode) {
+  return request<{ conversations: ConversationSummary[] }>(
+    `/conversations?mode=${mode}`,
+    {},
+    token
+  );
+}
+
+export function createConversation(
+  token: string,
+  mode: ConversationMode,
+  documentIds?: string[]
+) {
+  return request<{ conversation: ConversationSummary }>(
+    "/conversations",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        mode,
+        ...(documentIds && documentIds.length > 0 ? { documentIds } : {}),
+      }),
+    },
+    token
+  );
+}
+
+export function getConversation(token: string, id: string) {
+  return request<{ conversation: ConversationDetail }>(
+    `/conversations/${id}`,
+    {},
+    token
+  );
+}
+
+export function deleteConversation(token: string, id: string) {
+  return request<{ id: string }>(
+    `/conversations/${id}`,
+    { method: "DELETE" },
+    token
+  );
+}
+
+export function sendConversationMessage(
+  token: string,
+  id: string,
+  content: string,
+  webSearch?: boolean
+) {
+  return request<SendMessageResponse>(
+    `/conversations/${id}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({ content, ...(webSearch ? { webSearch: true } : {}) }),
+    },
+    token
+  );
+}
