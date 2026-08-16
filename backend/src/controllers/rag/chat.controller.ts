@@ -2,7 +2,10 @@ import type { Request, Response, NextFunction } from "express";
 import { prisma } from "../../models/prisma";
 import { resolveChatKey } from "../../services/rag/chatKeys.service";
 import { answerQuestion } from "../../services/rag/chat.service";
-import { RagCompletionError } from "../../services/rag/completion.service";
+import {
+  CompletionError,
+  mapCompletionErrorStatus,
+} from "../../services/rag/completion.service";
 import { listOwnedDocumentIds } from "../../services/rag/retrieval.service";
 import { AppError } from "../../middleware/errorHandler";
 
@@ -37,8 +40,8 @@ export async function chat(req: Request, res: Response, next: NextFunction) {
 
     res.json(result);
   } catch (err) {
-    if (err instanceof RagCompletionError) {
-      next(new AppError(mapCompletionStatus(err.status), err.message));
+    if (err instanceof CompletionError) {
+      next(new AppError(mapCompletionErrorStatus(err.status), err.message));
       return;
     }
     if (!(err instanceof AppError)) {
@@ -57,10 +60,4 @@ export async function filterOwnedDocumentIds(
   if (providedIds.length === 0) return undefined;
   const owned = new Set(await listOwnedDocumentIds(userId));
   return providedIds.filter((id) => owned.has(id));
-}
-
-function mapCompletionStatus(status: number): number {
-  if (status === 401) return 401;
-  if (status === 402 || status === 429) return 402;
-  return 502;
 }

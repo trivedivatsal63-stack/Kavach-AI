@@ -18,6 +18,7 @@ model User {
   isAdmin          Boolean  @default(false)
   createdAt        DateTime @default(now())
   apiKeys          ApiKey[]
+  conversations    Conversation[]
 }
 
 // The actual key value is never stored here — only LiteLLM's hashed
@@ -66,6 +67,12 @@ model RagChunk {
   page        Int?
   tokenCount  Int          @default(0) @map("token_count")
   content     String
+  // Generated column (GENERATED ALWAYS AS ... STORED) + GIN index added by
+  // raw SQL in models/rag/pool.ts's ensureSchema() for hybrid keyword
+  // search — declared here as Unsupported so `db push` knows it exists and
+  // never proposes dropping it, without Prisma trying to manage its
+  // generation expression itself (that stays owned by pool.ts).
+  contentTsv  Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, content)")) @map("content_tsv")
   document    RagDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, chunkIndex])
@@ -86,6 +93,9 @@ model RagKey {
   @@map("rag_keys")
 }
 
+// One hidden LiteLLM key per user, used by BOTH the general Chat UI and RAG
+// Studio so spend is attributed to the user's real balance — name predates
+// general chat, kept as-is (see chatKeys.service.ts).
 model RagChatKey {
   userId       String    @id @map("user_id")
   tokenId      String    @unique @map("token_id")
@@ -94,4 +104,51 @@ model RagChatKey {
   createdAt    DateTime  @default(now()) @db.Timestamptz @map("created_at")
 
   @@map("rag_chat_keys")
+}
+
+// ── Conversation history ────────────────────────────────────────────────
+// Shared by the general Chat page and RAG Studio (see `mode`). Unlike the
+// rag_* tables above, this is a normal Prisma-managed model (db push) — no
+// generated columns/custom indexes are needed here, so there's no reason to
+// keep it out of Prisma's tracking.
+
+model Conversation {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode        String    // "chat" | "rag" — see utils/chat.constants.ts CONVERSATION_MODE
+  title       String    @default("New chat")
+  // RAG mode only: document ids this conversation is scoped to. null means
+  // "all of the user's documents". Always null for mode="chat". Set once at
+  // creation and never mutated afterward — retroactively changing scope
+  // would misrepresent what earlier answers were actually grounded in.
+  documentIds Json?     @map("document_ids") @db.JsonB
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  messages    Message[]
+
+  @@index([userId, mode, updatedAt(sort: Desc)])
+  @@map("conversations")
+}
+
+model Message {
+  id               String       @id @default(uuid())
+  conversationId   String       @map("conversation_id")
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role             String       // "user" | "assistant"
+  content          String
+  // rag-mode assistant replies only — same Citation[] shape returned by
+  // the API today (models/rag/types.ts).
+  citations        Json?        @db.JsonB
+  // Assistant replies with web search on (either mode) — WebCitation[]
+  // shape (services/liveSearch/types.ts). Kept separate from `citations`
+  // rather than merged in, so the existing document-citation contract is
+  // untouched for every caller that never asks for web search.
+  webCitations     Json?        @map("web_citations") @db.JsonB
+  promptTokens     Int?         @map("prompt_tokens")
+  completionTokens Int?         @map("completion_tokens")
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
 }

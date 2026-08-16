@@ -16,6 +16,7 @@ documentsRouter.post(
     type: [
       "application/pdf",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "text/plain",
       "text/markdown",
       "application/octet-stream",
@@ -25,6 +26,7 @@ documentsRouter.post(
   documentsController.upload
 );
 documentsRouter.get("/", documentsController.list);
+documentsRouter.get("/:id/chunks", documentsController.listChunks);
 documentsRouter.delete("/:id", documentsController.remove);
 
 const keysRouter = Router();

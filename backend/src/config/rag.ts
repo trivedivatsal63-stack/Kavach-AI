@@ -10,4 +10,5 @@ export const ragConfig = {
   embeddingDim: env.embeddingDim,
   litellmBaseUrl: env.litellmBaseUrl,
   chatModel: env.chatModel,
+  vllmBaseUrl: env.vllmBaseUrl,
 } as const;

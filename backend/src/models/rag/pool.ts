@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_document ON rag_chunks (document_id);
 
+-- Keyword (full-text) search leg for hybrid retrieval — see
+-- retrieval.service.ts's keywordSearchChunks(). Generated column
+-- auto-maintains itself on every insert/update, so ingestion needs no
+-- separate write. english config (stemming) is a first pass; a "simple"
+-- config may suit citation-heavy legal text better — future tuning knob.
+ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+CREATE INDEX IF NOT EXISTS idx_rag_chunks_content_tsv ON rag_chunks USING GIN (content_tsv);
+
 -- User-facing RAG API keys. Follows the ApiKey discipline: the raw key is
 -- never stored — only a sha256 hash for lookup and LiteLLM's own hashed
 -- token_id for spend/budget management.

@@ -37,6 +37,15 @@ export const env = {
   litellmMasterKey: () => required("LITELLM_MASTER_KEY"),
   /** Must match litellm/config.yaml model_name and VLLM_SERVED_NAME */
   chatModel: optional("CHAT_MODEL", "qwen2.5-1.5b"),
+  /**
+   * Direct vLLM URL — used ONLY for tokenizer.service.ts's /tokenize calls.
+   * Every actual chat completion still goes through LITELLM_BASE_URL; this
+   * is a deliberate, narrow exception because only vLLM's own tokenizer
+   * gives real token counts for this model (LiteLLM's /utils/token_counter
+   * falls back to a generic tokenizer for self-hosted models — measured
+   * ~15% undercount). Do not use this for anything else.
+   */
+  vllmBaseUrl: optional("VLLM_BASE_URL", "http://127.0.0.1:8000"),
 
   qdrantUrl: optional("QDRANT_URL", "http://127.0.0.1:6333"),
   qdrantCollection: optional("QDRANT_COLLECTION", "rag_documents"),
@@ -46,4 +55,7 @@ export const env = {
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
   ),
   embeddingDim: positiveInt("EMBEDDING_DIM", 384),
+
+  /** Self-hosted SearXNG instance — see services/liveSearch/. */
+  searxngBaseUrl: optional("SEARXNG_URL", "http://127.0.0.1:8888"),
 } as const;

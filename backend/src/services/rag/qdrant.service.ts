@@ -3,10 +3,11 @@ import type { QdrantClient } from "@qdrant/js-client-rest" with {
   "resolution-mode": "import",
 };
 
-// Thin wrapper around the Qdrant REST client with per-user isolation baked
-// in: every point carries user_id + document_id payload fields (keyword
-// indexed), and every query filters on the caller's user_id so users can
-// never see each other's documents — including via the public RAG API.
+// One Qdrant collection per user — isolation is structural, not filter-based.
+// A query against user B's collection cannot return user A's points, full
+// stop, regardless of app-code correctness. Every point still carries
+// document_id as payload (keyword indexed) for per-document delete within a
+// user's own collection.
 //
 // The client is loaded lazily via dynamic import: @qdrant/js-client-rest is
 // ESM-only (its package.json exports map points `require` at a .js file
@@ -29,29 +30,47 @@ function getClient(): Promise<QdrantClient> {
   return clientPromise;
 }
 
-export async function ensureCollection(): Promise<void> {
+// userId is always server-resolved (req.userId from JWT, or ragKey.userId
+// looked up from a key hash) — never taken from request body/params — so
+// this can never be pointed at an attacker-chosen collection name.
+export function collectionNameForUser(userId: string): string {
+  return `rag_user_${userId}`;
+}
+
+function isNotFoundError(err: unknown): boolean {
+  const status =
+    (err as { status?: number })?.status ??
+    (err as { response?: { status?: number } })?.response?.status;
+  return status === 404;
+}
+
+// Cheap boot-time reachability check. Boot no longer owns any specific
+// collection — collections are created lazily, per user, on first upload.
+export async function pingQdrant(): Promise<void> {
+  const client = await getClient();
+  await client.getCollections();
+}
+
+// Lazy, per-user collection creation. Called on first RAG action for a user
+// (first upload) — see ingestion.service.ts.
+export async function ensureUserCollection(userId: string): Promise<string> {
+  const name = collectionNameForUser(userId);
   const client = await getClient();
   const existing = await client.getCollections();
-  const found = existing.collections.find(
-    (c) => c.name === ragConfig.qdrantCollection
-  );
+  const found = existing.collections.find((c) => c.name === name);
 
   if (!found) {
-    await client.createCollection(ragConfig.qdrantCollection, {
+    await client.createCollection(name, {
       vectors: { size: ragConfig.embeddingDim, distance: "Cosine" },
     });
-    await client.createPayloadIndex(ragConfig.qdrantCollection, {
-      field_name: "user_id",
-      field_schema: "keyword",
-    });
-    await client.createPayloadIndex(ragConfig.qdrantCollection, {
+    await client.createPayloadIndex(name, {
       field_name: "document_id",
       field_schema: "keyword",
     });
-    return;
+    return name;
   }
 
-  const info = await client.getCollection(ragConfig.qdrantCollection);
+  const info = await client.getCollection(name);
   const vectors = info.config.params.vectors;
   const size =
     vectors && !Array.isArray(vectors) && "size" in vectors
@@ -59,28 +78,36 @@ export async function ensureCollection(): Promise<void> {
       : undefined;
   if (size !== undefined && size !== ragConfig.embeddingDim) {
     throw new Error(
-      `Qdrant collection "${ragConfig.qdrantCollection}" has vector size ${size}, ` +
+      `Qdrant collection "${name}" has vector size ${size}, ` +
         `but EMBEDDING_DIM is ${ragConfig.embeddingDim} (embedding model changed?). ` +
         `Drop the collection to reindex all documents.`
     );
   }
+  return name;
 }
 
 export interface VectorPoint {
   id: string;
   vector: number[];
-  userId: string;
   documentId: string;
+  /** Tags tabular (spreadsheet-row) chunks so retrieval/reranking can treat them distinctly later. */
+  documentType?: string;
 }
 
-export async function upsertPoints(points: VectorPoint[]): Promise<void> {
+export async function upsertPoints(
+  collectionName: string,
+  points: VectorPoint[]
+): Promise<void> {
   if (points.length === 0) return;
   const client = await getClient();
-  await client.upsert(ragConfig.qdrantCollection, {
+  await client.upsert(collectionName, {
     points: points.map((p) => ({
       id: p.id,
       vector: p.vector,
-      payload: { user_id: p.userId, document_id: p.documentId },
+      payload: {
+        document_id: p.documentId,
+        ...(p.documentType ? { document_type: p.documentType } : {}),
+      },
     })),
   });
 }
@@ -91,37 +118,50 @@ export interface SearchHit {
 }
 
 export async function searchChunks(params: {
-  userId: string;
+  collectionName: string;
   vector: number[];
   limit: number;
   documentIds?: string[];
 }): Promise<SearchHit[]> {
   const client = await getClient();
-  const must: Record<string, unknown>[] = [
-    { key: "user_id", match: { value: params.userId } },
-  ];
+  const must: Record<string, unknown>[] = [];
   if (params.documentIds && params.documentIds.length > 0) {
     must.push({ key: "document_id", match: { any: params.documentIds } });
   }
 
-  const result = await client.query(ragConfig.qdrantCollection, {
-    query: params.vector,
-    limit: params.limit,
-    filter: { must },
-    with_payload: false,
-  });
+  try {
+    const result = await client.query(params.collectionName, {
+      query: params.vector,
+      limit: params.limit,
+      filter: must.length > 0 ? { must } : undefined,
+      with_payload: false,
+    });
 
-  return result.points.map((point) => ({
-    chunkId: String(point.id),
-    score: point.score ?? 0,
-  }));
+    return result.points.map((point) => ({
+      chunkId: String(point.id),
+      score: point.score ?? 0,
+    }));
+  } catch (err) {
+    // A user who has never uploaded anything has no collection yet — that's
+    // not an error, it's just zero results.
+    if (isNotFoundError(err)) return [];
+    throw err;
+  }
 }
 
-export async function deleteDocumentPoints(documentId: string): Promise<void> {
+export async function deleteDocumentPoints(
+  collectionName: string,
+  documentId: string
+): Promise<void> {
   const client = await getClient();
-  await client.delete(ragConfig.qdrantCollection, {
-    filter: {
-      must: [{ key: "document_id", match: { value: documentId } }],
-    },
-  });
+  try {
+    await client.delete(collectionName, {
+      filter: {
+        must: [{ key: "document_id", match: { value: documentId } }],
+      },
+    });
+  } catch (err) {
+    if (isNotFoundError(err)) return;
+    throw err;
+  }
 }

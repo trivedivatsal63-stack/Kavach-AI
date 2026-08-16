@@ -1,14 +1,19 @@
 import { randomUUID } from "crypto";
 import { EMBED_BATCH_SIZE, DOCUMENT_STATUS } from "../../utils/rag.constants";
-import { extractText } from "../../processing/parsers";
-import { chunkDocument, type Chunk } from "../../processing/chunker";
+import { extractText, type ExtractedContent } from "../../processing/parsers";
+import {
+  chunkDocument,
+  chunkStructuredBlocks,
+  type Chunk,
+} from "../../processing/chunker";
+import { chunkTabularSheets } from "../../processing/tabularChunker";
 import { embedDocuments } from "./embedding.service";
 import {
   deleteChunksByDocument,
   insertChunks,
   updateDocumentStatus,
 } from "./documents.service";
-import { ensureCollection, upsertPoints } from "./qdrant.service";
+import { ensureUserCollection, upsertPoints } from "./qdrant.service";
 
 export interface IngestionInput {
   userId: string;
@@ -18,24 +23,21 @@ export interface IngestionInput {
   buffer: Buffer;
 }
 
-// Full pipeline for one document: parse -> structure-aware chunk -> embed ->
-// persist chunks + vectors. Runs inside the in-process queue (see queue.ts)
-// so uploads return immediately and a slow embedding doesn't block the API.
+// Full pipeline for one document: parse -> chunk (format-appropriate
+// strategy) -> embed -> persist chunks + vectors. Runs inside the in-process
+// queue (see queue.ts) so uploads return immediately and a slow embedding
+// doesn't block the API.
 export async function ingestDocument(input: IngestionInput): Promise<void> {
   await updateDocumentStatus(input.documentId, DOCUMENT_STATUS.PROCESSING);
 
   try {
-    const { text, pageCount } = await extractText(input.mimeType, input.buffer);
-    if (!text.trim()) {
-      throw new Error("No extractable text found in this file.");
-    }
-
-    const chunks: Chunk[] = chunkDocument({ text, pageCount });
+    const extracted = await extractText(input.mimeType, input.buffer);
+    const { chunks, documentType } = toChunks(extracted);
     if (chunks.length === 0) {
       throw new Error("Document produced no chunks.");
     }
 
-    await ensureCollection();
+    const collectionName = await ensureUserCollection(input.userId);
     const vectors = await embedInBatches(chunks);
     if (vectors.length !== chunks.length) {
       throw new Error(
@@ -46,11 +48,12 @@ export async function ingestDocument(input: IngestionInput): Promise<void> {
     const chunkIds = chunks.map(() => randomUUID());
     await insertChunks(input.documentId, input.name, chunks, chunkIds);
     await upsertPoints(
+      collectionName,
       chunks.map((_chunk, i) => ({
         id: chunkIds[i],
         vector: vectors[i],
-        userId: input.userId,
         documentId: input.documentId,
+        ...(documentType ? { documentType } : {}),
       }))
     );
 
@@ -67,6 +70,35 @@ export async function ingestDocument(input: IngestionInput): Promise<void> {
     // start clean.
     await deleteChunksByDocument(input.documentId).catch(() => {});
     throw err;
+  }
+}
+
+// Dispatches to the chunking strategy matching what the parser was actually
+// able to preserve: flat text falls back to the regex-heuristic chunker,
+// DOCX structure drives the block-based chunker directly, and spreadsheet
+// rows get their own row-per-chunk strategy (never the paragraph chunker).
+function toChunks(extracted: ExtractedContent): {
+  chunks: Chunk[];
+  documentType?: string;
+} {
+  switch (extracted.kind) {
+    case "text":
+      if (!extracted.text.trim()) {
+        throw new Error("No extractable text found in this file.");
+      }
+      return {
+        chunks: chunkDocument({
+          text: extracted.text,
+          pageCount: extracted.pageCount,
+        }),
+      };
+    case "structured":
+      return { chunks: chunkStructuredBlocks(extracted.blocks) };
+    case "tabular":
+      return {
+        chunks: chunkTabularSheets(extracted.sheets),
+        documentType: "tabular",
+      };
   }
 }
 

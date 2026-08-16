@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { ShieldMark } from "./ShieldMark";
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return [
@@ -11,7 +12,21 @@ function navClass({ isActive }: { isActive: boolean }): string {
   ].join(" ");
 }
 
-export function Layout({ children }: { children: ReactNode }) {
+export function Layout({
+  children,
+  fullHeight = false,
+}: {
+  children: ReactNode;
+  /**
+   * App-shell mode for immersive, ChatGPT/Claude-style pages (Chat, RAG
+   * Studio): locks the page to the viewport height with no page-level
+   * scroll — the page's own content owns its internal scroll regions
+   * instead — and drops the footer, matching how those apps look during
+   * actual use (no footer competing for space). Regular pages keep the
+   * normal scrolling-document layout.
+   */
+  fullHeight?: boolean;
+}) {
   const { token, user, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -21,14 +36,16 @@ export function Layout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
+    <div
+      className={`flex flex-col bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 ${
+        fullHeight ? "h-screen overflow-hidden" : "min-h-screen"
+      }`}
+    >
       <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/80 backdrop-blur dark:border-gray-800 dark:bg-gray-950/80">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white">
-              K
-            </span>
-            <span className="text-base font-semibold tracking-tight">
+            <ShieldMark className="h-7 w-7" />
+            <span className="font-display text-base font-semibold tracking-tight">
               Kavach AI
             </span>
           </Link>
@@ -38,6 +55,9 @@ export function Layout({ children }: { children: ReactNode }) {
               <>
                 <NavLink to="/dashboard" className={navClass}>
                   Dashboard
+                </NavLink>
+                <NavLink to="/chat" className={navClass}>
+                  Chat
                 </NavLink>
                 <NavLink to="/rag" className={navClass}>
                   RAG Studio
@@ -79,14 +99,29 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col">{children}</main>
+      <main
+        className={`flex flex-1 flex-col ${fullHeight ? "min-h-0 overflow-hidden" : ""}`}
+      >
+        {children}
+      </main>
 
-      <footer className="border-t border-gray-200 py-6 dark:border-gray-800">
-        <p className="px-4 text-center text-xs text-gray-400 dark:text-gray-600">
-          Kavach AI Platform — OpenAI-compatible gateway with RAG. Model:
-          qwen2.5-1.5b.
-        </p>
-      </footer>
+      {!fullHeight && (
+        <footer className="border-t border-gray-200 py-8 dark:border-gray-800">
+          <div className="mx-auto flex max-w-7xl flex-col items-center gap-3 px-4 sm:flex-row sm:justify-between sm:px-6">
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400">
+              <ShieldMark className="h-4 w-4 opacity-70" />
+              Kavach AI
+            </div>
+            <p className="text-center text-xs text-gray-400 dark:text-gray-600">
+              Self-hosted gateway — vLLM · LiteLLM · Qdrant. Serving{" "}
+              <code className="font-mono text-gray-500 dark:text-gray-500">
+                qwen2.5-1.5b
+              </code>
+              .
+            </p>
+          </div>
+        </footer>
+      )}
     </div>
   );
 }

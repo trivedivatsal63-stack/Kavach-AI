@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from "express";
 import { enqueueIngestion } from "../../jobs/ingestion.queue";
 import {
   createDocument,
+  getDocument,
+  listChunksForDocument,
   listDocuments,
 } from "../../services/rag/documents.service";
 import { deleteDocument } from "../../services/rag/retrieval.service";
@@ -44,7 +46,7 @@ export async function upload(req: Request, res: Response, next: NextFunction) {
     ) {
       throw new AppError(
         400,
-        "Unsupported file type. Allowed: PDF, DOCX, TXT, Markdown."
+        "Unsupported file type. Allowed: PDF, DOCX, XLSX, TXT, Markdown."
       );
     }
 
@@ -84,6 +86,23 @@ export async function list(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function listChunks(req: Request, res: Response, next: NextFunction) {
+  try {
+    const doc = await getDocument(req.userId!, String(req.params.id));
+    if (!doc) {
+      throw new AppError(404, "Document not found.");
+    }
+    res.json({ chunks: await listChunksForDocument(req.userId!, doc.id) });
+  } catch (err) {
+    if (!(err instanceof AppError)) {
+      console.error("GET /rag/documents/:id/chunks failed:", err);
+      next(new AppError(500, "Failed to list chunks."));
+      return;
+    }
+    next(err);
+  }
+}
+
 export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     const deleted = await deleteDocument(req.userId!, String(req.params.id));
@@ -120,6 +139,8 @@ function guessMimeFromName(name: string): string {
   if (lower.endsWith(".pdf")) return "application/pdf";
   if (lower.endsWith(".docx"))
     return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".xlsx"))
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "text/markdown";
   if (lower.endsWith(".txt")) return "text/plain";
   return "application/octet-stream";

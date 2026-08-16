@@ -169,6 +169,34 @@ export async function getChunksByIds(ids: string[]): Promise<Map<string, RagChun
   return map;
 }
 
+// All chunks for one document, in reading order — powers the "Visual view"
+// document/chunk browser. rag_chunks has no user_id column (see
+// retrieval.service.ts's keywordSearchChunks for the same pattern), so
+// ownership is enforced via the join to rag_documents instead.
+export async function listChunksForDocument(
+  userId: string,
+  documentId: string
+): Promise<RagChunkRow[]> {
+  const result = await pool.query(
+    `SELECT c.id, c.document_id, c.chunk_index, c.heading_path, c.source, c.page, c.token_count, c.content
+     FROM rag_chunks c
+     JOIN rag_documents d ON d.id = c.document_id
+     WHERE c.document_id = $1 AND d.user_id = $2 AND d.deleted_at IS NULL
+     ORDER BY c.chunk_index ASC`,
+    [documentId, userId]
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    documentId: row.document_id,
+    chunkIndex: row.chunk_index,
+    headingPath: row.heading_path ?? null,
+    source: row.source,
+    page: row.page ?? null,
+    tokenCount: row.token_count,
+    content: row.content,
+  }));
+}
+
 function rowToDocument(row: {
   id: string;
   user_id: string;

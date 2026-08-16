@@ -1,10 +1,14 @@
-# Hybrid stack: ONLY inference runs in Docker (vLLM + LiteLLM).
-# Everything else runs on the host in separate terminals:
-#   Postgres, Qdrant, embedding, backend, frontend
+# Hybrid stack: inference, the RAG embedding service, and Qdrant run in
+# Docker (vLLM + LiteLLM + embedding + qdrant). Everything else runs on the
+# host in separate terminals: Postgres, backend, frontend.
 #
 # LiteLLM reaches:
 #   - vLLM via the compose network (http://vllm:8000/v1)
 #   - host Postgres via host.docker.internal (litellm database)
+#
+# The backend (host) reaches embedding via http://127.0.0.1:8002 and Qdrant
+# via http://127.0.0.1:6333 — unchanged from when both ran by hand, since
+# both containers publish those same ports.
 #
 # Usage:
 #   docker compose up -d
@@ -12,7 +16,7 @@
 
 services:
   vllm:
-    # v0.26.0 — CUDA arch includes modern GPUs; works on RTX 2050 (sm_86) too.
+    # v0.26.0 — broad CUDA arch support across modern consumer/laptop GPUs.
     image: vllm/vllm-openai:v0.26.0
     restart: unless-stopped
     ipc: host
@@ -22,7 +26,10 @@ services:
       VLLM_WSL2_ENABLE_PIN_MEMORY: "1"
     volumes:
       - huggingface_cache:/root/.cache/huggingface
-    # Defaults tuned for RTX 2050 4GB — override in .env
+    # Defaults tuned conservatively for a VRAM-constrained laptop GPU — all
+    # env-var driven (VLLM_GPU_MEMORY_UTILIZATION, VLLM_MAX_MODEL_LEN,
+    # VLLM_MAX_NUM_SEQS below), not hardcoded to a specific card, so a bigger
+    # GPU just means raising these in .env, not editing this file.
     command:
       - --model=${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct-AWQ}
       - --served-model-name=${VLLM_SERVED_NAME:-qwen2.5-1.5b}
@@ -81,6 +88,102 @@ services:
       timeout: 10s
       retries: 10
       start_period: 45s
+
+  embedding:
+    build:
+      context: ./embedding
+    restart: unless-stopped
+    environment:
+      # Must match backend/.env's EMBEDDING_MODEL (not read from that file —
+      # Docker containers don't see the host process's .env, so this repeats
+      # it explicitly). Override via the root .env if you ever change models.
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      # GPU/CPU fallback threshold — see embedding/app/embedder.py. Shares
+      # the GPU with vllm (below), so this is what keeps embeddings on CPU
+      # when vllm has already claimed most of a small card's VRAM.
+      EMBEDDING_GPU_MIN_FREE_MB: ${EMBEDDING_GPU_MIN_FREE_MB:-1536}
+    volumes:
+      # Shares vllm's HF cache volume — embedding/Dockerfile sets
+      # HF_HOME to this same path, so the model download persists across
+      # container recreates instead of re-downloading every restart.
+      - huggingface_cache:/root/.cache/huggingface
+    ports:
+      - "${EMBEDDING_PORT:-8002}:8002"
+    # Mirrors vllm's GPU access exactly — embedder.py does its own free-VRAM
+    # probe at startup and falls back to CPU on this card, but it still needs
+    # the device visible to make that decision (see embedding/Dockerfile).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # No curl in this image (see embedding/Dockerfile's apt-get list) —
+      # python3 is already present, so this mirrors litellm's urllib-based
+      # check above rather than vllm's curl-based one.
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # fastembed loads/downloads the ONNX model on startup; no explicit
+      # timing in app/embedder.py, so this follows the "40-60s when unclear"
+      # default. Tune down once real cold-start time is observed.
+      start_period: 60s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      # Same on-disk data the standalone qdrant.exe was using — collections
+      # carry over unchanged, no re-ingestion needed.
+      - ./qdrant/storage:/qdrant/storage
+      - ./qdrant/snapshots:/qdrant/snapshots
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    healthcheck:
+      # No curl/wget in this image — plain TCP probe via bash's /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  searxng:
+    build:
+      context: ./searxng
+    restart: unless-stopped
+    environment:
+      # update-ca-certificates (run by the entrypoint) merges our injected
+      # Avast CA into the system bundle, but SearXNG's own Python HTTP
+      # client (httpx) uses its bundled certifi list by default and ignores
+      # that — pointing it at the system bundle explicitly is what actually
+      # makes it trust the cert. wget (used for the healthcheck) already
+      # worked without this since it reads the system store directly.
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      # /etc/searxng is __SEARXNG_CONFIG_PATH (confirmed via the image's own
+      # entrypoint.sh) — settings.yml lives here. If this directory is empty
+      # on first start, the entrypoint auto-generates settings.yml from its
+      # template with a fresh random secret_key; ours has since been edited
+      # to enable the JSON output format the backend depends on.
+      - ./searxng:/etc/searxng:rw
+    ports:
+      - "${SEARXNG_PORT:-8888}:8080"
+    healthcheck:
+      # wget is present in this image (no curl) — confirmed by inspection.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
 volumes:
   huggingface_cache:
