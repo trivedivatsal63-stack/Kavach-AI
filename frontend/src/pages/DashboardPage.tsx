@@ -201,7 +201,7 @@ export function DashboardPage() {
 
         {/* API keys */}
         <div className="card">
-          <div className="flex items-center justify-between border-b border-gray-100 p-5 dark:border-gray-800">
+          <div className="flex items-center justify-between border-b border-gray-100 p-5 dark:border-neutral-800">
             <div>
               <h2 className="text-base font-semibold">API keys</h2>
               <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
@@ -230,7 +230,7 @@ export function DashboardPage() {
               <div className="mt-2 flex items-center gap-2">
                 <code
                   data-testid="revealed-key"
-                  className="flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 font-mono text-sm dark:bg-gray-950"
+                  className="flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 font-mono text-sm dark:bg-black"
                 >
                   {revealedKey}
                 </code>
@@ -253,7 +253,7 @@ export function DashboardPage() {
             </div>
           )}
 
-          <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+          <ul className="divide-y divide-gray-100 dark:divide-neutral-800">
             {keys.length === 0 && (
               <li className="p-5 text-sm text-gray-500 dark:text-gray-400">
                 No API keys yet. Generate your first one above.
@@ -293,7 +293,7 @@ export function DashboardPage() {
 
         {/* Usage */}
         <div className="card overflow-hidden">
-          <div className="border-b border-gray-100 p-5 dark:border-gray-800">
+          <div className="border-b border-gray-100 p-5 dark:border-neutral-800">
             <h2 className="text-base font-semibold">Usage</h2>
             <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
               Pulled live from LiteLLM — no local ledger.
@@ -307,7 +307,7 @@ export function DashboardPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-gray-100 text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  <tr className="border-b border-gray-100 text-xs uppercase tracking-wide text-gray-500 dark:border-neutral-800 dark:text-gray-400">
                     <th className="px-5 py-3 font-medium">Key created</th>
                     <th className="px-5 py-3 font-medium">Spend</th>
                     <th className="px-5 py-3 font-medium">Requests</th>
@@ -319,7 +319,7 @@ export function DashboardPage() {
                   {usage.map((row) => (
                     <tr
                       key={row.keyId}
-                      className="border-b border-gray-100 last:border-0 dark:border-gray-800"
+                      className="border-b border-gray-100 last:border-0 dark:border-neutral-800"
                     >
                       <td className="px-5 py-3">
                         {new Date(row.createdAt).toLocaleString()}

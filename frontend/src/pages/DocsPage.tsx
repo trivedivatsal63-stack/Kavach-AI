@@ -4,7 +4,7 @@ import { CodeBlock } from "../components/CodeBlock";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4001";
-const MODEL_NAME = "qwen2.5-1.5b";
+const MODEL_NAME = "qwen2.5-7b";
 
 const curlExample = `curl ${API_BASE_URL}/v1/chat/completions \\
   -H "Authorization: Bearer <your-api-key>" \\
@@ -77,7 +77,7 @@ function TabButton({
       className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
         active
           ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-          : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+          : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-neutral-800"
       }`}
     >
       {children}
@@ -109,7 +109,7 @@ export function DocsPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Base URL
               </p>
-              <code className="mt-1.5 block overflow-x-auto rounded-lg bg-gray-100 px-3 py-2 text-sm dark:bg-gray-800">
+              <code className="mt-1.5 block overflow-x-auto rounded-lg bg-gray-100 px-3 py-2 text-sm dark:bg-neutral-800">
                 {API_BASE_URL}/v1
               </code>
             </div>
@@ -117,7 +117,7 @@ export function DocsPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 Model
               </p>
-              <code className="mt-1.5 block overflow-x-auto rounded-lg bg-gray-100 px-3 py-2 text-sm dark:bg-gray-800">
+              <code className="mt-1.5 block overflow-x-auto rounded-lg bg-gray-100 px-3 py-2 text-sm dark:bg-neutral-800">
                 {MODEL_NAME}
               </code>
             </div>
@@ -125,7 +125,7 @@ export function DocsPage() {
         </div>
 
         <div className="card overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-3 dark:border-gray-800">
+          <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-3 dark:border-neutral-800">
             <TabButton active={lang === "curl"} onClick={() => setLang("curl")}>
               curl
             </TabButton>
@@ -145,7 +145,7 @@ export function DocsPage() {
           <div>
             <h2 className="text-lg font-semibold">Live web search</h2>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Set <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-gray-800">web_search: true</code>{" "}
+              Set <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">web_search: true</code>{" "}
               on any request to ground the answer with real, live-fetched web
               results — self-hosted (no third-party search API), and never
               triggered automatically. Off by default.
@@ -169,14 +169,14 @@ export function DocsPage() {
               . Authenticate with a RAG API key (created there) — spend comes
               out of your credit balance, enforced via the key&apos;s real
               LiteLLM budget. Add{" "}
-              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-gray-800">webSearch: true</code>{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">webSearch: true</code>{" "}
               to also ground the answer with live web results when your
               documents alone might be out of date.
             </p>
           </div>
 
           <div className="card overflow-hidden">
-            <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-3 dark:border-gray-800">
+            <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-3 dark:border-neutral-800">
               <TabButton
                 active={lang === "curl"}
                 onClick={() => setLang("curl")}

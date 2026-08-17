@@ -1,6 +1,7 @@
 import { pool } from "../../models/rag/pool";
 import {
   DOCUMENT_STATUS,
+  MAX_CHUNK_CHARS,
   MIN_RETRIEVAL_SCORE,
   MODEL_MAX_CONTEXT_TOKENS,
   OUTPUT_TOKEN_RESERVE,
@@ -14,6 +15,7 @@ import {
 import { getChunksByIds, softDeleteDocument } from "./documents.service";
 import { countTokens } from "./tokenizer.service";
 import { formatCitation } from "./citationFormat";
+import { rerankChunks } from "./reranker.service";
 import type { Citation, RagDocumentRow } from "../../models/rag/types";
 
 // Hybrid retrieval: dense vector search (Qdrant, per-user collection) fused
@@ -164,24 +166,46 @@ export async function retrieve(params: {
 
   // Hydrate every surviving candidate's content up front — one indexed
   // query regardless of how many, and we need real content to measure real
-  // token cost per candidate below.
+  // token cost per candidate below (and to rerank, which needs actual text).
   const chunksById = await getChunksByIds(strongHits.map((h) => h.chunkId));
+
+  // Cross-encoder reranking: RRF is a coarse first-stage signal that never
+  // actually reads chunk text against the query — verified directly that
+  // this lets a chunk containing the complete, literal correct answer rank
+  // behind chunks that just mention the query terms more densely without
+  // answering anything (LLP Act's real "Tribunal" definition, diluted by
+  // unrelated definitions packed into the same chunk, never surfaced in the
+  // fused top ranks). This re-scores every surviving candidate by reading
+  // (query, chunk) together. Best-effort: falls back to the untouched fused
+  // order if the reranker service is unreachable.
+  const rerankCandidates = strongHits
+    .map((hit) => {
+      const chunk = chunksById.get(hit.chunkId);
+      return chunk ? { chunkId: hit.chunkId, content: chunk.content } : null;
+    })
+    .filter((c): c is { chunkId: string; content: string } => c !== null);
+  const rerankScores = await rerankChunks(params.query, rerankCandidates);
+  const orderedHits = rerankScores
+    ? [...strongHits].sort(
+        (a, b) => (rerankScores.get(b.chunkId) ?? 0) - (rerankScores.get(a.chunkId) ?? 0)
+      )
+    : strongHits;
 
   const chunkTokenBudget =
     MODEL_MAX_CONTEXT_TOKENS - params.reservedTokens - OUTPUT_TOKEN_RESERVE;
 
-  // Walk the fused ranking best-first, adding chunks until the next one
-  // would exceed the real token budget, then stop — never skip an oversized
-  // chunk to grab a smaller one further down (that would break rank order
-  // for no good reason). Only calls the tokenizer for chunks actually
-  // considered, which in practice is far fewer than the full candidate pool
-  // (typically single digits) since the walk stops at the first overflow —
-  // no need for batching a pool vLLM's /tokenize endpoint can't batch anyway
-  // (confirmed: TokenizeCompletionRequest.prompt is a single string, not an
-  // array).
+  // Walk the (reranked, when available) ranking best-first, adding chunks
+  // until the next one would exceed the real token budget, then stop —
+  // never skip an oversized chunk to grab a smaller one further down (that
+  // would break rank order for no good reason). Only calls the tokenizer
+  // for chunks actually considered, which in practice is far fewer than the
+  // full candidate pool (typically single digits) since the walk stops at
+  // the first overflow — no need for batching a pool vLLM's /tokenize
+  // endpoint can't batch anyway (confirmed: TokenizeCompletionRequest.prompt
+  // is a single string, not an array).
   const citations: Citation[] = [];
   let usedTokens = 0;
-  for (const hit of strongHits) {
+  for (const hit of orderedHits) {
     const chunk = chunksById.get(hit.chunkId);
     if (!chunk) continue;
 
@@ -191,8 +215,16 @@ export async function retrieve(params: {
       source: chunk.source,
       page: chunk.page,
       headingPath: chunk.headingPath,
-      excerpt: truncate(chunk.content, 500),
-      score: Math.min(1, hit.rrfScore / MAX_RRF_SCORE),
+      // MAX_CHUNK_CHARS, not an arbitrary smaller cap — chunks are already
+      // bounded to this length at ingestion time, so this should never
+      // actually truncate real content. Was 500: verified directly (LLP
+      // Act's "minimum number of partners" answer) that a smaller cap can
+      // cut a chunk off mid-sentence right before the actual answer, even
+      // when retrieval correctly found the exact right chunk — the model
+      // then honestly (and wrongly) said the documents didn't contain it,
+      // because the excerpt it was actually given didn't.
+      excerpt: truncate(chunk.content, MAX_CHUNK_CHARS),
+      score: rerankScores?.get(hit.chunkId) ?? Math.min(1, hit.rrfScore / MAX_RRF_SCORE),
     };
 
     const candidateTokens = await countTokens(formatCitation(citations.length, candidate));

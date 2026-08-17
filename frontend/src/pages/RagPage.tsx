@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Layout } from "../components/Layout";
+import { useSearchParams } from "react-router-dom";
+import { AppShell } from "../components/appshell/AppShell";
+import { AppSidebar } from "../components/appshell/AppSidebar";
+import { AppRightPanel } from "../components/appshell/AppRightPanel";
+import { WelcomeScreen } from "../components/appshell/WelcomeScreen";
 import { Badge } from "../components/Badge";
 import { Spinner } from "../components/Spinner";
-import { ChatShell } from "../components/chat/ChatShell";
-import { ConversationSidebar } from "../components/chat/ConversationSidebar";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Composer } from "../components/chat/Composer";
 import { DocumentChunkBrowser } from "../components/rag/DocumentChunkBrowser";
@@ -42,6 +44,7 @@ type View = "chat" | "documents" | "browse";
 
 export function RagPage() {
   const { token } = useAuth();
+  const [searchParams] = useSearchParams();
 
   const [documents, setDocuments] = useState<RagDocument[]>([]);
   const [docError, setDocError] = useState<string | null>(null);
@@ -64,6 +67,16 @@ export function RagPage() {
   const [pendingScopeDocId, setPendingScopeDocId] = useState("");
   const [draft, setDraft] = useState("");
   const [webSearch, setWebSearch] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // Entry points from AppSidebar's "Documents" nav item and ChatPage's
+  // welcome screen link here with ?view=documents / ?view=keys — both land
+  // on the "documents" view since the keys card already lives there.
+  useEffect(() => {
+    const v = searchParams.get("view");
+    if (v === "documents" || v === "keys") setView("documents");
+    else if (v === "browse") setView("browse");
+  }, [searchParams]);
 
   const {
     conversations,
@@ -290,370 +303,425 @@ export function RagPage() {
   ];
 
   return (
-    <Layout fullHeight>
-      <div className="flex h-full min-h-0 flex-1 flex-col">
-        {/* Compact top bar — fixed height, never scrolls */}
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800 sm:px-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-base font-semibold tracking-tight">
-              RAG Studio
-            </h1>
-            {documents.length > 0 && (
-              <span className="text-xs text-gray-400 dark:text-gray-500">
-                {documents.length} doc{documents.length === 1 ? "" : "s"} ·{" "}
-                {totalChunks} chunk{totalChunks === 1 ? "" : "s"}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {view === "chat" && activeId && (
-              <span className="badge bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                Scoped to: {scopeLabel(activeConversation?.documentIds)}
-              </span>
-            )}
-            <div className="inline-flex rounded-lg border border-gray-200 p-1 dark:border-gray-800">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setView(tab.key)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    view === tab.key
-                      ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                      : "text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
+    <AppShell
+      sidebar={
+        <AppSidebar
+          mode="rag"
+          search={search}
+          onSearchChange={setSearch}
+          onLiveSearchShortcut={() => {
+            setView("chat");
+            handleNewChat();
+            setWebSearch(true);
+          }}
+          onNewChat={() => {
+            setView("chat");
+            handleNewChat();
+          }}
+        />
+      }
+      main={
+        <div className="flex h-full min-h-0 flex-1 flex-col">
+          {/* Compact top bar — fixed height, never scrolls */}
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-neutral-800 sm:px-6">
+            <div className="flex items-center gap-3">
+              <h1 className="text-base font-semibold tracking-tight">
+                RAG Studio
+              </h1>
+              {documents.length > 0 && (
+                <span className="text-xs text-gray-400 dark:text-gray-500">
+                  {documents.length} doc{documents.length === 1 ? "" : "s"} ·{" "}
+                  {totalChunks} chunk{totalChunks === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {view === "chat" && activeId && (
+                <span className="badge bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-gray-300">
+                  Scoped to: {scopeLabel(activeConversation?.documentIds)}
+                </span>
+              )}
+              <div className="inline-flex rounded-lg border border-gray-200 p-1 dark:border-neutral-800">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setView(tab.key)}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      view === tab.key
+                        ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                        : "text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Fills all remaining height — internal scroll only, page never scrolls */}
-        <div className="min-h-0 flex-1">
-          {view === "chat" && (
-            <ChatShell
-              sidebar={
-                <ConversationSidebar
-                  conversations={conversations}
-                  activeId={activeId}
-                  onSelect={(id) => void selectConversation(id)}
-                  onNew={handleNewChat}
-                  onDelete={(id) => void deleteConversation(id)}
-                  newLabel="New chat"
-                  emptyLabel="No conversations yet."
-                />
-              }
-              main={
-                <div className="card flex h-full min-h-0 flex-1 flex-col">
-                  {!activeId && (
-                    <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-                      Scope
-                      <select
-                        value={pendingScopeDocId}
-                        onChange={(e) => setPendingScopeDocId(e.target.value)}
-                        className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-950"
-                      >
-                        <option value="">All documents</option>
-                        {indexedDocs.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                  {chatError && (
-                    <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400">
-                      {chatError}
-                    </p>
-                  )}
+          {/* Fills all remaining height — internal scroll only, page never scrolls */}
+          <div className="min-h-0 flex-1">
+            {view === "chat" && (
+              <div className="flex h-full min-h-0 flex-1 flex-col">
+                {!activeId && (
+                  <div className="flex shrink-0 items-center gap-2 border-b border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-neutral-800 dark:text-gray-400">
+                    Scope
+                    <select
+                      value={pendingScopeDocId}
+                      onChange={(e) => setPendingScopeDocId(e.target.value)}
+                      className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs dark:border-neutral-700 dark:bg-black"
+                    >
+                      <option value="">All documents</option>
+                      {indexedDocs.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {chatError && (
+                  <p className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400">
+                    {chatError}
+                  </p>
+                )}
+
+                {!activeId ? (
+                  <WelcomeScreen
+                    title="Ask your documents"
+                    subtitle="Answers are grounded in your indexed chunks and come with citations back to the source."
+                    actions={[
+                      {
+                        icon: "💬",
+                        chipColor: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
+                        label: "Ask your documents",
+                        onClick: () => startComposing(),
+                      },
+                      {
+                        icon: "📄",
+                        chipColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+                        label: "Upload a document",
+                        onClick: () => setView("documents"),
+                      },
+                      {
+                        icon: "🧩",
+                        chipColor: "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-400",
+                        label: "Browse chunks visually",
+                        onClick: () => setView("browse"),
+                      },
+                      {
+                        icon: "🔑",
+                        chipColor: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400",
+                        label: "Get a RAG API key",
+                        onClick: () => setView("documents"),
+                      },
+                    ]}
+                  />
+                ) : (
                   <MessageThread
                     messages={messages}
                     sending={sending}
                     emptyTitle="Ask your documents"
                     emptyBody="Answers are grounded in your indexed chunks and come with citations back to the source."
                   />
-                  <Composer
-                    value={draft}
-                    onChange={setDraft}
-                    onSubmit={() => void handleSend()}
-                    disabled={sending}
-                    placeholder="e.g. What does the doc say about pricing?"
-                    webSearch={webSearch}
-                    onToggleWebSearch={() => setWebSearch((v) => !v)}
-                  />
-                </div>
-              }
-            />
-          )}
+                )}
 
-          {view === "browse" && (
-            <div className="h-full p-4">
-              <DocumentChunkBrowser token={token} documents={documents} />
-            </div>
-          )}
+                <Composer
+                  value={draft}
+                  onChange={setDraft}
+                  onSubmit={() => void handleSend()}
+                  disabled={sending}
+                  placeholder="e.g. What does the doc say about pricing?"
+                  webSearch={webSearch}
+                  onToggleWebSearch={() => setWebSearch((v) => !v)}
+                  onAttach={() => setView("documents")}
+                />
+              </div>
+            )}
 
-          {view === "documents" && (
-            <div className="h-full overflow-y-auto p-4 sm:p-6">
-              <div className="grid gap-6 lg:grid-cols-2">
-                <div className="space-y-6">
-                  {docError && (
-                    <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400">
-                      {docError}
-                    </p>
-                  )}
+            {view === "browse" && (
+              <div className="h-full p-4">
+                <DocumentChunkBrowser token={token} documents={documents} />
+              </div>
+            )}
 
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDragActive(true);
-                    }}
-                    onDragLeave={() => setDragActive(false)}
-                    onDrop={handleDrop}
-                    className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-colors ${
-                      dragActive
-                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
-                        : "border-gray-300 bg-white hover:border-indigo-400 dark:border-gray-700 dark:bg-gray-900"
-                    }`}
-                  >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept={ACCEPT}
-                      className="sr-only"
-                      onChange={(e) => {
-                        if (e.target.files?.length) queueFiles(e.target.files);
-                        e.target.value = "";
+            {view === "documents" && (
+              <div className="h-full overflow-y-auto p-4 sm:p-6">
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <div className="space-y-6">
+                    {docError && (
+                      <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400">
+                        {docError}
+                      </p>
+                    )}
+
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragActive(true);
                       }}
-                    />
-                    <p className="text-sm font-medium">
-                      Drop files here or{" "}
-                      <span className="text-indigo-600 dark:text-indigo-400">
-                        browse
-                      </span>
-                    </p>
-                    <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                      PDF, DOCX, TXT, Markdown · up to{" "}
-                      {Math.round(RAG_MAX_UPLOAD_BYTES / 1024 / 1024)} MB each ·
-                      multiple at once
-                    </p>
+                      onDragLeave={() => setDragActive(false)}
+                      onDrop={handleDrop}
+                      className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-colors ${
+                        dragActive
+                          ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
+                          : "border-gray-300 bg-white hover:border-indigo-400 dark:border-neutral-700 dark:bg-neutral-900"
+                      }`}
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept={ACCEPT}
+                        className="sr-only"
+                        onChange={(e) => {
+                          if (e.target.files?.length) queueFiles(e.target.files);
+                          e.target.value = "";
+                        }}
+                      />
+                      <p className="text-sm font-medium">
+                        Drop files here or{" "}
+                        <span className="text-indigo-600 dark:text-indigo-400">
+                          browse
+                        </span>
+                      </p>
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                        PDF, DOCX, TXT, Markdown · up to{" "}
+                        {Math.round(RAG_MAX_UPLOAD_BYTES / 1024 / 1024)} MB each ·
+                        multiple at once
+                      </p>
+                    </div>
+
+                    {hasUploads && (
+                      <div className="card overflow-hidden">
+                        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-neutral-800">
+                          <p className="text-sm font-semibold">Uploading</p>
+                          {uploads.some((u) => u.status === "done") && (
+                            <button onClick={clearCompleted} className="btn-ghost">
+                              Clear completed
+                            </button>
+                          )}
+                        </div>
+                        <ul className="divide-y divide-gray-100 dark:divide-neutral-800">
+                          {uploads.map((u) => (
+                            <li key={u.id} className="px-4 py-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="min-w-0 flex-1 truncate text-sm font-medium">
+                                  {u.file.name}
+                                </p>
+                                <div className="flex shrink-0 items-center gap-2">
+                                  {u.status === "uploading" && (
+                                    <span className="text-xs text-gray-400">
+                                      {u.progress}%
+                                    </span>
+                                  )}
+                                  {u.status === "done" && (
+                                    <Badge variant="success">Uploaded</Badge>
+                                  )}
+                                  {u.status === "error" && (
+                                    <button
+                                      onClick={() => retryUpload(u.id)}
+                                      className="btn-secondary px-2 py-1 text-xs"
+                                    >
+                                      Retry
+                                    </button>
+                                  )}
+                                  {(u.status === "pending" ||
+                                    u.status === "error") && (
+                                    <button
+                                      onClick={() => removeUpload(u.id)}
+                                      className="btn-ghost"
+                                      aria-label={`Remove ${u.file.name}`}
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {u.status === "uploading" && (
+                                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-neutral-800">
+                                  <div
+                                    className="h-full rounded-full bg-indigo-500 transition-all"
+                                    style={{ width: `${u.progress}%` }}
+                                  />
+                                </div>
+                              )}
+                              {u.status === "error" && u.error && (
+                                <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                                  {u.error}
+                                </p>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="card">
+                      <div className="border-b border-gray-100 px-4 py-3 dark:border-neutral-800">
+                        <p className="text-sm font-semibold">Your documents</p>
+                      </div>
+                      <ul className="divide-y divide-gray-100 dark:divide-neutral-800">
+                        {documents.length === 0 && (
+                          <li className="px-4 py-8 text-center text-sm text-gray-400 dark:text-gray-500">
+                            No documents yet. Upload one above.
+                          </li>
+                        )}
+                        {documents.map((doc) => (
+                          <li
+                            key={doc.id}
+                            className="flex items-center justify-between gap-3 px-4 py-3"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {doc.name}
+                              </p>
+                              <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                                {formatBytes(doc.sizeBytes)} ·{" "}
+                                {new Date(doc.createdAt).toLocaleDateString()}
+                                {doc.status === "indexed" &&
+                                  ` · ${doc.chunkCount} chunk${
+                                    doc.chunkCount === 1 ? "" : "s"
+                                  }`}
+                              </p>
+                              {doc.status === "failed" && doc.error && (
+                                <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                                  {doc.error}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <StatusBadge status={doc.status} />
+                              {(doc.status === "indexed" ||
+                                doc.status === "failed") && (
+                                <button
+                                  onClick={() => void handleDelete(doc.id)}
+                                  disabled={deletingId === doc.id}
+                                  className="btn-danger"
+                                >
+                                  {deletingId === doc.id ? "Deleting…" : "Delete"}
+                                </button>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
 
-                  {hasUploads && (
-                    <div className="card overflow-hidden">
-                      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800">
-                        <p className="text-sm font-semibold">Uploading</p>
-                        {uploads.some((u) => u.status === "done") && (
-                          <button onClick={clearCompleted} className="btn-ghost">
-                            Clear completed
-                          </button>
+                  <div className="card h-fit">
+                    <div className="border-b border-gray-100 px-5 py-4 dark:border-neutral-800">
+                      <p className="text-sm font-semibold">RAG API keys</p>
+                      <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        Use with{" "}
+                        <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px] dark:bg-neutral-800">
+                          POST /v1/rag/query
+                        </code>{" "}
+                        — spend comes out of your credits.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4 p-5">
+                      {keyError && (
+                        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400">
+                          {keyError}
+                        </p>
+                      )}
+
+                      <form
+                        onSubmit={(e) => void handleCreateKey(e)}
+                        className="flex gap-2"
+                      >
+                        <input
+                          value={keyName}
+                          onChange={(e) => setKeyName(e.target.value)}
+                          placeholder="Key name (e.g. my-app)"
+                          className="input flex-1"
+                        />
+                        <button
+                          type="submit"
+                          disabled={creatingKey || !keyName.trim()}
+                          className="btn-primary"
+                        >
+                          {creatingKey ? "Creating…" : "Create key"}
+                        </button>
+                      </form>
+
+                      {revealedKey && (
+                        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+                          <p className="text-sm font-medium">
+                            Copy this key now — it&apos;s only shown once.
+                          </p>
+                          <div className="mt-2 flex items-center gap-2">
+                            <code className="flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 font-mono text-xs dark:bg-black">
+                              {revealedKey}
+                            </code>
+                            <button onClick={handleCopy} className="btn-secondary">
+                              {copied ? "Copied" : "Copy"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <ul className="divide-y divide-gray-100 dark:divide-neutral-800">
+                        {keys.length === 0 && (
+                          <li className="py-3 text-center text-sm text-gray-400 dark:text-gray-500">
+                            No RAG keys yet.
+                          </li>
                         )}
-                      </div>
-                      <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-                        {uploads.map((u) => (
-                          <li key={u.id} className="px-4 py-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="min-w-0 flex-1 truncate text-sm font-medium">
-                                {u.file.name}
+                        {keys.map((k) => (
+                          <li
+                            key={k.id}
+                            className="flex items-center justify-between py-3"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {k.name}
                               </p>
-                              <div className="flex shrink-0 items-center gap-2">
-                                {u.status === "uploading" && (
-                                  <span className="text-xs text-gray-400">
-                                    {u.progress}%
-                                  </span>
-                                )}
-                                {u.status === "done" && (
-                                  <Badge variant="success">Uploaded</Badge>
-                                )}
-                                {u.status === "error" && (
-                                  <button
-                                    onClick={() => retryUpload(u.id)}
-                                    className="btn-secondary px-2 py-1 text-xs"
-                                  >
-                                    Retry
-                                  </button>
-                                )}
-                                {(u.status === "pending" ||
-                                  u.status === "error") && (
-                                  <button
-                                    onClick={() => removeUpload(u.id)}
-                                    className="btn-ghost"
-                                    aria-label={`Remove ${u.file.name}`}
-                                  >
-                                    ✕
-                                  </button>
-                                )}
-                              </div>
+                              <p className="text-xs text-gray-400 dark:text-gray-500">
+                                ${k.spend.toFixed(4)} spent ·{" "}
+                                {new Date(k.createdAt).toLocaleDateString()}
+                              </p>
                             </div>
-                            {u.status === "uploading" && (
-                              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-                                <div
-                                  className="h-full rounded-full bg-indigo-500 transition-all"
-                                  style={{ width: `${u.progress}%` }}
-                                />
-                              </div>
-                            )}
-                            {u.status === "error" && u.error && (
-                              <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                                {u.error}
-                              </p>
+                            {!k.revokedAt ? (
+                              <button
+                                onClick={() => void handleRevoke(k.id)}
+                                className="btn-danger"
+                              >
+                                Revoke
+                              </button>
+                            ) : (
+                              <Badge variant="danger">Revoked</Badge>
                             )}
                           </li>
                         ))}
                       </ul>
                     </div>
-                  )}
-
-                  <div className="card">
-                    <div className="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
-                      <p className="text-sm font-semibold">Your documents</p>
-                    </div>
-                    <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {documents.length === 0 && (
-                        <li className="px-4 py-8 text-center text-sm text-gray-400 dark:text-gray-500">
-                          No documents yet. Upload one above.
-                        </li>
-                      )}
-                      {documents.map((doc) => (
-                        <li
-                          key={doc.id}
-                          className="flex items-center justify-between gap-3 px-4 py-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {doc.name}
-                            </p>
-                            <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
-                              {formatBytes(doc.sizeBytes)} ·{" "}
-                              {new Date(doc.createdAt).toLocaleDateString()}
-                              {doc.status === "indexed" &&
-                                ` · ${doc.chunkCount} chunk${
-                                  doc.chunkCount === 1 ? "" : "s"
-                                }`}
-                            </p>
-                            {doc.status === "failed" && doc.error && (
-                              <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-                                {doc.error}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <StatusBadge status={doc.status} />
-                            {(doc.status === "indexed" ||
-                              doc.status === "failed") && (
-                              <button
-                                onClick={() => void handleDelete(doc.id)}
-                                disabled={deletingId === doc.id}
-                                className="btn-danger"
-                              >
-                                {deletingId === doc.id ? "Deleting…" : "Delete"}
-                              </button>
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="card h-fit">
-                  <div className="border-b border-gray-100 px-5 py-4 dark:border-gray-800">
-                    <p className="text-sm font-semibold">RAG API keys</p>
-                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                      Use with{" "}
-                      <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px] dark:bg-gray-800">
-                        POST /v1/rag/query
-                      </code>{" "}
-                      — spend comes out of your credits.
-                    </p>
-                  </div>
-
-                  <div className="space-y-4 p-5">
-                    {keyError && (
-                      <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400">
-                        {keyError}
-                      </p>
-                    )}
-
-                    <form
-                      onSubmit={(e) => void handleCreateKey(e)}
-                      className="flex gap-2"
-                    >
-                      <input
-                        value={keyName}
-                        onChange={(e) => setKeyName(e.target.value)}
-                        placeholder="Key name (e.g. my-app)"
-                        className="input flex-1"
-                      />
-                      <button
-                        type="submit"
-                        disabled={creatingKey || !keyName.trim()}
-                        className="btn-primary"
-                      >
-                        {creatingKey ? "Creating…" : "Create key"}
-                      </button>
-                    </form>
-
-                    {revealedKey && (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
-                        <p className="text-sm font-medium">
-                          Copy this key now — it&apos;s only shown once.
-                        </p>
-                        <div className="mt-2 flex items-center gap-2">
-                          <code className="flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 font-mono text-xs dark:bg-gray-950">
-                            {revealedKey}
-                          </code>
-                          <button onClick={handleCopy} className="btn-secondary">
-                            {copied ? "Copied" : "Copy"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {keys.length === 0 && (
-                        <li className="py-3 text-center text-sm text-gray-400 dark:text-gray-500">
-                          No RAG keys yet.
-                        </li>
-                      )}
-                      {keys.map((k) => (
-                        <li
-                          key={k.id}
-                          className="flex items-center justify-between py-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {k.name}
-                            </p>
-                            <p className="text-xs text-gray-400 dark:text-gray-500">
-                              ${k.spend.toFixed(4)} spent ·{" "}
-                              {new Date(k.createdAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                          {!k.revokedAt ? (
-                            <button
-                              onClick={() => void handleRevoke(k.id)}
-                              className="btn-danger"
-                            >
-                              Revoke
-                            </button>
-                          ) : (
-                            <Badge variant="danger">Revoked</Badge>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
-    </Layout>
+      }
+      rightPanel={
+        <AppRightPanel
+          conversations={conversations}
+          activeId={activeId}
+          search={search}
+          onSelect={(id) => {
+            setView("chat");
+            void selectConversation(id);
+          }}
+          onDelete={(id) => void deleteConversation(id)}
+          onNewChat={() => {
+            setView("chat");
+            handleNewChat();
+          }}
+        />
+      }
+    />
   );
 }
 

@@ -1,6 +1,6 @@
 # Remaining work
 
-Consolidated backlog from the security and RAG-quality review on 2026-08-14. Nothing here is started. Estimates are rough engineering time, not calendar time, and are flagged where scope is genuinely uncertain rather than just rounded for tidiness.
+Consolidated backlog from the security and RAG-quality review on 2026-08-14, updated 2026-08-17 after a real implementation + testing session. Estimates are rough engineering time, not calendar time, and are flagged where scope is genuinely uncertain rather than just rounded for tidiness. Items marked ✅ are actually done and verified against real data — not just planned.
 
 ## Security
 
@@ -31,10 +31,11 @@ Sessions are stateless JWTs, 7-hour expiry (`middleware/auth.ts`), no server-sid
 
 ## RAG quality
 
-### 6. Reranking
+### 6. Reranking — ✅ DONE (2026-08-17)
 Retrieval today stops at RRF-fused first-stage candidates (vector + keyword). No cross-encoder reranking step scores (query, chunk) pairs jointly before generation — this is the single biggest gap versus how production RAG systems retrieve, and the most likely fix for cases like the earlier LLP Act queries that retrieved plausible-but-wrong chunks.
-- **Fix:** add a small self-hosted cross-encoder (e.g. `bge-reranker-base`, CPU-feasible) reranking the top of the fused candidate pool before the token-budget cutoff.
-- **Estimate:** 2–4 hrs, depending on whether it extends the existing embedding microservice or needs its own.
+- **Shipped:** `embedding/app/reranker.py` (fastembed `TextCrossEncoder`, `Xenova/ms-marco-MiniLM-L-6-v2`, same GPU/CPU-fallback pattern as the embedder) + `backend/src/services/rag/reranker.service.ts`, wired into `retrieval.service.ts` between candidate hydration and the token-budget walk. Best-effort — falls back to fused RRF order if the reranker service is unreachable.
+- **Verified:** isolated test scored the real LLP Act "Tribunal" definition 0.93 against two decoys (0.63, 0.88). Live re-test confirmed reranking correctly surfaces relevant chunks with genuinely high, well-separated confidence (0.88–0.98 vs the old RRF's scattered 37–80%).
+- **New finding from testing this, not previously scoped:** on the new 8192-token window, the token budget is no longer the limiting factor on chunk count — `CANDIDATE_POOL_SIZE` (24 per leg, ~24-48 fused) is. The system now sends nearly everything retrieval finds (citation lists of 40+ observed) rather than a curated top set, which dilutes reranking's own precision benefit. **Follow-up needed:** cap chunk count explicitly post-rerank (e.g. top 8–10) instead of letting "whatever fits in tokens" decide. ~30–45 min, contained to `retrieval.service.ts`.
 
 ### 7. Query rewriting for conversational follow-ups
 Retrieval only ever embeds the latest message — a follow-up like "what about the renewal terms?" has no idea what "renewal terms" refers to without prior turns folded in. Currently invisible because testing so far has mostly been single-shot questions.
@@ -47,14 +48,16 @@ All retrieval-quality verification so far has been manual, ad hoc testing agains
 - **Estimate:** harness code ~1–2 hrs; building a genuinely useful labeled set is separate effort, hard to size cleanly.
 
 ### 9. Contextual chunking
-Chunks are structure-aware (heading-path tracked) but embedded in isolation — a chunk saying "the deadline is 30 days" loses that it's about refunds specifically once separated from its heading.
+Chunks are structure-aware (heading-path tracked) but embedded in isolation — a chunk saying "the deadline is 30 days" loses that it's about refunds specifically once separated from its heading. Not the same thing as the clause-numbering fix below — that fixed *where* chunk boundaries fall for legal definitions specifically; this is about giving every chunk situational context regardless of format.
 - **Fix:** prepend a short LLM-generated context blurb to each chunk before embedding (Anthropic's "contextual retrieval" technique) — the existing `headingPath` tracking is already half the infrastructure needed.
 - **Estimate:** 1.5–2.5 hrs — adds an LLM call per chunk at ingestion time, so also a cost/latency tradeoff on upload.
+- **Related work already done (2026-08-17):** `rag-accuracy-improve.md` layers 1+2 (real PDF structure + parenthesized clause-numbering for legal definitions lists) shipped and fixed a real, verified production failure — see that file for details.
 
 ### 10. Faithfulness checking
 The system prompt strongly instructs the model not to answer beyond the retrieved context, but nothing verifies it actually didn't — small models ignore such instructions more often than large ones.
 - **Fix:** a post-hoc check comparing the generated answer's claims against the cited chunks.
 - **Estimate:** 1–1.5 hrs.
+- **Real evidence this matters (2026-08-17):** live-tested a real IBC question — the model correctly transcribed a real definition's content but attached a fabricated section citation ("section 12(13)" — the real section is 5(13), confirmed against the actual table of contents). Correct content, wrong citation, stated with full confidence. Exactly the failure mode this item exists to catch.
 
 ### 11. Document versioning
 Re-uploading a changed document today just creates a new document row — no "this replaces the old version" concept, so stale chunks from an outdated file keep surfacing alongside the new ones.
@@ -66,6 +69,17 @@ A scanned/image-only PDF silently extracts little or no text via `pdf-parse`, an
 - **Fix:** detect low-text-relative-to-page-count, rasterize pages, run OCR (e.g. Tesseract.js), merge back into the chunking pipeline.
 - **Estimate:** 3–5+ hrs, least certain of the list.
 
+### 13. Excerpt truncation cutting off correct answers — ✅ DONE (2026-08-17)
+Not originally on this list — found live during testing, not planned for. `retrieval.service.ts` truncated every citation excerpt to a hardcoded 500 chars, a leftover from the old 2048-token window. Verified directly: a real query ("minimum number of partners") had reranking correctly find the exact right chunk (99.6% match) — but the 500-char cap cut the excerpt off *immediately before* the actual answer, so the model correctly (and wrongly) said the documents didn't contain it, because the text it was actually given didn't.
+- **Shipped:** raised the cap to `MAX_CHUNK_CHARS` (800) — chunks are already bounded to this length at ingestion, so this should never truncate real content again. Re-tested the same question after the fix: correct answer, correct section citation.
+
+### 14. Long-conversation + cross-conversation memory pipeline
+Today, conversation history beyond the token budget (`RAG_HISTORY_TOKEN_BUDGET` 250 / `CHAT_HISTORY_TOKEN_BUDGET` 1200) is silently dropped, newest-first — nothing is summarized or preserved beyond what's in Postgres (which keeps everything, but only ever surfaces the most recent slice to the model). There's also no cross-conversation memory at all — no equivalent of "remembering" a user's stated preferences between separate conversations.
+- **Fix — two genuinely separate systems:**
+  1. **Long-conversation memory**: rolling summarization (periodically compress older turns into a running summary, same pattern this very session runs on) and/or retrieval over the conversation's own past turns (embed + store like documents, retrieve only what's relevant to the current question instead of blind recency).
+  2. **Cross-conversation preference memory**: an extraction step (does this turn state something worth remembering long-term?), a new persistent table (not `messages` — keyed by user, not conversation), and injection of relevant stored facts into the system prompt at the start of any new conversation.
+- **Estimate:** not yet scoped in detail — meaningfully bigger than anything else on this list, closer to the size of the original live-search build. Needs a real design pass (what counts as "worth remembering," how a user reviews/edits/deletes stored memory) before implementation, not just a coding estimate.
+
 ---
 
-**Total if all twelve were done: roughly 13–20+ hours**, weighted heavily toward items 6, 8, 11, and 12 — everything else is fairly tightly bounded.
+**Total if everything still open were done: roughly 12–19+ hours** for items 1–5, 7–9, 11, 12 — plus item 14, which is large enough to need its own scoping pass before it gets a real number. Items 6, 10 (partially — the check itself is still open, but real evidence for why it matters is now in hand), and 13 are done.

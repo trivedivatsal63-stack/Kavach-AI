@@ -59,8 +59,55 @@ interface AssembledChunk {
 // whole-document text without page markers, so chunk-level pages are null
 // for now (kept in the schema so a better parser can fill them in).
 export function chunkDocument(input: ChunkingInput): Chunk[] {
-  const lines = input.text.replace(/\r\n/g, "\n").split("\n");
+  const normalized = splitEmbeddedDefinitionClauses(
+    input.text.replace(/\r\n/g, "\n")
+  );
+  const lines = normalized.split("\n");
   return finalizeChunks(assembleChunks(buildBlocks(lines)));
+}
+
+// Indian statutes define terms as "(a) "term" means..., (b) "other" means...".
+// Verified directly (LLP Act, Companies Act, IBC all use this): pdf-parse
+// extracts an entire definitions list as ONE continuous run with no real
+// newline between entries — the PDF's own line-wrapping doesn't align with
+// clause boundaries (confirmed: a real definitions-list chunk had exactly 2
+// newlines total, both from the heading prefix, none between any of its ~6
+// packed-together definitions). Without a real line break, detectHeading()
+// can never see each definition — it only ever inspects whole lines — so the
+// entire list stayed one undifferentiated block, sliced by raw character
+// count with no idea where one definition ends and the next begins. This is
+// the direct, confirmed cause of a real failure: the LLP Act's actual
+// "Tribunal" definition existed, correctly worded, but was diluted by
+// several unrelated definitions crammed into the same chunk, and never
+// surfaced in retrieval for a "what is Tribunal" query despite reranking.
+//
+// Inserting a real newline before each detected clause opening (only, not
+// at the very start of the text, and only when not already at a line start)
+// is enough to let the existing per-line heading machinery see it —
+// everything else about chunk assembly/packing stays untouched.
+const DEFINITION_CLAUSE_START = /^\(([a-z]{1,3}|[ivxlcdm]{1,6})\)\s*["“]([^"”]{1,80})["”]\s+means\b/i;
+// Same clause shape, global + no anchor, for finding embedded occurrences
+// mid-string rather than only testing a line's start.
+const EMBEDDED_DEFINITION_CLAUSE = /\(([a-z]{1,3}|[ivxlcdm]{1,6})\)\s*["“][^"”]{1,80}["”]\s+means\b/gi;
+// Deliberately deep — always nests under whatever real section heading
+// (numbered headings top out around level 3-4 for realistic dot-nesting)
+// came before it, and the existing stack-pop-on-same-level logic correctly
+// replaces one definition with the next sibling rather than nesting them.
+const DEFINITION_HEADING_LEVEL = 10;
+
+function splitEmbeddedDefinitionClauses(text: string): string {
+  return text.replace(EMBEDDED_DEFINITION_CLAUSE, (match, _label, offset: number) => {
+    const precededByNewline = offset > 0 && text[offset - 1] === "\n";
+    const prefix = offset === 0 || precededByNewline ? "" : "\n";
+    // A newline goes both before AND after the match — buildBlocks treats a
+    // detected heading as consuming its ENTIRE line, so if the definition's
+    // body text ("the National Company Law Tribunal constituted...") stayed
+    // on the same line as its "(u) "Tribunal" means" marker, that whole
+    // body would be silently discarded, not just left unsplit. Isolating
+    // the marker on its own line is what makes the body survive as real,
+    // separate buffer content on the next line.
+    return `${prefix}${match}\n`;
+  });
 }
 
 // DOCX (and any future format that exposes real structure) — no heading/
@@ -229,6 +276,23 @@ function detectHeading(
   const trimmed = line.trim();
   if (!trimmed) return null;
 
+  // Legal defined-term entries — "(u) "Tribunal" means the National Company
+  // Law Tribunal constituted under section 408..." — checked FIRST, before
+  // the reference-line rejection below. Verified directly (LLP Act,
+  // Companies Act, IBC all use this pattern for their definitions
+  // sections): these routinely end in a statute cross-reference like
+  // "(18 of 2013)." which otherwise matches looksLikeReferenceLine's
+  // bibliography-citation pattern and would get the whole definition
+  // rejected as citation noise instead of recognized as a heading.
+  // DEFINITION_HEADING_LEVEL is deliberately deep — always nests under
+  // whatever real section heading (level 1-4) came before it, and each new
+  // definition correctly replaces its previous sibling via the same
+  // level-based stack-pop logic used for numbered headings below.
+  const definitionClause = DEFINITION_CLAUSE_START.exec(trimmed);
+  if (definitionClause) {
+    return { level: DEFINITION_HEADING_LEVEL, text: definitionClause[2].trim() };
+  }
+
   // Citation/reference lines are never headings. PDFs render endnote entries
   // as "10 Author, Title (Publisher, Year)." — which otherwise matches the
   // numbered-heading pattern below, turning every footnote into a section
@@ -315,12 +379,15 @@ function looksLikeReferenceLine(line: string): boolean {
   }
 
   // "…, Author, Title (Publisher, Year)." / "…(2021, p. 12)." — ends with a
-  // parenthesized year, possibly with a page pointer.
-  if (
-    /\(\s*[^()]*?(?:19|20)\d{2}(?:[a-z]|,\s*(?:p{1,2}\.?|pp\.?|at)\s*[\d.\-\u2013]+)?\s*\)\s*\.?$/i.test(
-      trimmed
-    )
-  ) {
+  // parenthesized year, possibly with a page pointer. Excludes Indian
+  // statute cross-references shaped "(N of YEAR)" — e.g. "(18 of 2013)" —
+  // textually similar to a bibliography year-citation but structurally
+  // different; confirmed a legal definition ending in a real statute
+  // reference like this must not be misclassified as noise and dropped.
+  const yearParenMatch = /\(\s*([^()]*?(?:19|20)\d{2}(?:[a-z]|,\s*(?:p{1,2}\.?|pp\.?|at)\s*[\d.\-\u2013]+)?)\s*\)\s*\.?$/i.exec(
+    trimmed
+  );
+  if (yearParenMatch && !/^\d+\s+of\s+(?:19|20)\d{2}$/i.test(yearParenMatch[1].trim())) {
     return true;
   }
 

@@ -4,7 +4,7 @@ type Variant = "neutral" | "success" | "warning" | "danger" | "info";
 
 const styles: Record<Variant, string> = {
   neutral:
-    "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
+    "bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-gray-300",
   success:
     "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
   warning:

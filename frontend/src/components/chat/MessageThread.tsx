@@ -54,7 +54,7 @@ export function MessageThread({
                 ? "bg-indigo-600 text-white"
                 : m.error
                   ? "border border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400"
-                  : "border border-gray-200 bg-gray-50 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                  : "border border-gray-200 bg-gray-50 text-gray-900 dark:border-neutral-700 dark:bg-neutral-800 dark:text-gray-100"
             }`}
           >
             <p className="whitespace-pre-wrap">{m.content}</p>

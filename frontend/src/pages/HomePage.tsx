@@ -8,11 +8,11 @@ const CURL_EXAMPLE = `curl https://your-gateway/v1/chat/completions \\
   -H "Authorization: Bearer $KAVACH_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "qwen2.5-1.5b",
+    "model": "qwen2.5-7b",
     "messages": [{"role": "user", "content": "Summarize this clause..."}]
   }'`;
 
-const flowChat = ["Your app", "Kavach gateway", "LiteLLM", "vLLM"];
+const flowChat = ["Your app", "HarrierKavach gateway", "LiteLLM", "vLLM"];
 const flowRag = ["Your documents", "Chunk + embed", "Qdrant", "Cited answer"];
 
 const features = [
@@ -57,9 +57,10 @@ export function HomePage() {
             </span>
           </h1>
           <p className="max-w-xl text-base text-gray-600 sm:text-lg dark:text-gray-400">
-            Kavach runs a fully self-hosted stack — vLLM serving qwen2.5-1.5b
-            through LiteLLM — with API keys, budgets, usage tracking and a
-            private RAG store, all on infrastructure you control.
+            HarrierKavach runs a fully self-hosted stack — vLLM serving
+            qwen2.5-7b through LiteLLM — with API keys, budgets, usage
+            tracking and a private RAG store, all on infrastructure you
+            control.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3">
@@ -85,7 +86,7 @@ export function HomePage() {
       </section>
 
       {/* ── Code sample ──────────────────────────────────────────────── */}
-      <section className="border-y border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900/40">
+      <section className="border-y border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900/40">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:items-center lg:gap-16">
           <div>
             <span className="eyebrow">
@@ -114,7 +115,7 @@ export function HomePage() {
       </section>
 
       {/* ── Features ─────────────────────────────────────────────────── */}
-      <section className="border-t border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900/40">
+      <section className="border-t border-gray-200 bg-white dark:border-neutral-800 dark:bg-neutral-900/40">
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
           <div className="mx-auto max-w-2xl text-center">
             <span className="eyebrow justify-center">
@@ -191,7 +192,7 @@ function FlowRow({ label, steps }: { label: string; steps: string[] }) {
       <div className="flex flex-1 flex-wrap items-center gap-2.5">
         {steps.map((step, i) => (
           <div key={step} className="flex items-center gap-2.5">
-            <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-mono text-xs text-gray-700 shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+            <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 font-mono text-xs text-gray-700 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-gray-300">
               {step}
             </span>
             {i < steps.length - 1 && (
