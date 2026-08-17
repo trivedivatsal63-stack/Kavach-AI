@@ -13,7 +13,7 @@ import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constan
 // this is invoked) — this module only builds the prompt and calls LiteLLM.
 
 const SYSTEM_PROMPT =
-  "You are Kavach AI's assistant — a helpful, direct conversational AI. " +
+  "You are HarrierKavach AI's assistant — a helpful, direct conversational AI. " +
   "Answer clearly and concisely. If you don't know something or are unsure, " +
   "say so rather than guessing.";
 

@@ -19,7 +19,7 @@ export function ConversationSidebar({
 }) {
   return (
     <div className="card flex h-full flex-col overflow-hidden">
-      <div className="border-b border-gray-100 p-3 dark:border-gray-800">
+      <div className="border-b border-gray-100 p-3 dark:border-neutral-800">
         <button onClick={onNew} className="btn-primary w-full">
           + {newLabel}
         </button>
@@ -35,8 +35,8 @@ export function ConversationSidebar({
             <div
               className={`group flex items-center gap-1 rounded-lg px-3 py-2 text-sm transition-colors ${
                 c.id === activeId
-                  ? "bg-gray-100 dark:bg-gray-800"
-                  : "hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                  ? "bg-gray-100 dark:bg-neutral-800"
+                  : "hover:bg-gray-50 dark:hover:bg-neutral-800/60"
               }`}
             >
               <button
@@ -47,7 +47,7 @@ export function ConversationSidebar({
               </button>
               <button
                 onClick={() => onDelete(c.id)}
-                className="shrink-0 rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-200 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-gray-700 dark:hover:text-red-400"
+                className="shrink-0 rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-200 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-neutral-700 dark:hover:text-red-400"
                 aria-label={`Delete ${c.title}`}
               >
                 ✕

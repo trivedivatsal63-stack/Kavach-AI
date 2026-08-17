@@ -4,9 +4,9 @@
 # http://localhost:4000.
 
 model_list:
-  - model_name: qwen2.5-1.5b
+  - model_name: qwen2.5-7b
     litellm_params:
-      model: openai/qwen2.5-1.5b
+      model: openai/qwen2.5-7b
       api_base: os.environ/VLLM_API_BASE
       api_key: not-needed
       # Placeholder rates so budget/spend work for self-hosted models.

@@ -24,7 +24,7 @@ export const PAGE_FETCH_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 export const PAGE_FETCH_MAX_CHARS = 1200;
 
 export const USER_AGENT =
-  "Mozilla/5.0 (compatible; KavachAI-LiveSearch/1.0; +self-hosted)";
+  "Mozilla/5.0 (compatible; HarrierKavachAI-LiveSearch/1.0; +self-hosted)";
 
 // Live search shares the model's 2048-token window with everything else
 // (see MODEL_MAX_CONTEXT_TOKENS in rag.constants.ts) — the same discipline
