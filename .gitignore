@@ -18,4 +18,9 @@ build/
 
 # localfiles
 qdrant/storage/
+qdrant/qdrant.exe
+qdrant/.qdrant-initialized
 searxng/*.crt
+
+# local Claude Code settings (machine-specific)
+.claude/settings.local.json
