@@ -1,10 +1,15 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4001";
 
+export type UserRole = "user" | "superadmin";
+export type UserStatus = "active" | "paused" | "blocked";
+
 export interface User {
   id: string;
   email: string;
   name: string | null;
   creditBalanceUsd: number;
+  role: UserRole;
+  status: UserStatus;
 }
 
 export interface AuthResponse {
@@ -81,6 +86,9 @@ async function request<T>(
     ) {
       window.dispatchEvent(new CustomEvent("kavach:unauthorized"));
     }
+    if (res.status === 403 && token && /account has been blocked/i.test(message)) {
+      window.dispatchEvent(new CustomEvent("kavach:unauthorized"));
+    }
     throw new ApiError(res.status, message);
   }
   return data as T;
@@ -98,6 +106,10 @@ export function login(email: string, password: string) {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
+}
+
+export function fetchMe(token: string) {
+  return request<User>("/auth/me", {}, token);
 }
 
 export function listKeys(token: string) {
@@ -421,6 +433,154 @@ export function sendConversationMessage(
       method: "POST",
       body: JSON.stringify({ content, ...(webSearch ? { webSearch: true } : {}) }),
     },
+    token
+  );
+}
+
+// ── Superadmin ────────────────────────────────────────────────────────────
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  status: UserStatus;
+  deletedAt: string | null;
+  creditBalanceUsd: number;
+  createdAt: string;
+  apiKeyCount: number;
+  conversationCount: number;
+  lastActiveAt: string;
+}
+
+export interface AdminUserKey {
+  id: string;
+  kind: "api" | "rag";
+  name?: string;
+  createdAt: string;
+  revokedAt: string | null;
+  totalSpend: number;
+  totalRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface AdminConversation {
+  id: string;
+  mode: string;
+  title: string;
+  updatedAt: string;
+  createdAt: string;
+  messageCount: number;
+  lastMessage: {
+    role: string;
+    preview: string;
+    createdAt: string;
+  } | null;
+}
+
+export interface AdminAuditRow {
+  id: string;
+  adminId: string;
+  action: string;
+  detail: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface AdminUserActivity {
+  user: Omit<
+    AdminUserSummary,
+    "apiKeyCount" | "conversationCount" | "lastActiveAt"
+  >;
+  keys: AdminUserKey[];
+  conversations: AdminConversation[];
+  audit: AdminAuditRow[];
+}
+
+export function listAdminUsers(
+  token: string,
+  opts?: { q?: string; includeDeleted?: boolean }
+) {
+  const params = new URLSearchParams();
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.includeDeleted) params.set("includeDeleted", "true");
+  const qs = params.toString();
+  return request<AdminUserSummary[]>(
+    `/admin/users${qs ? `?${qs}` : ""}`,
+    {},
+    token
+  );
+}
+
+export function getAdminUser(token: string, id: string) {
+  return request<AdminUserActivity>(`/admin/users/${id}`, {}, token);
+}
+
+export function adminPauseUser(token: string, id: string) {
+  return request<AdminUserActivity["user"]>(
+    `/admin/users/${id}/pause`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function adminUnpauseUser(token: string, id: string) {
+  return request<AdminUserActivity["user"]>(
+    `/admin/users/${id}/unpause`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function adminBlockUser(token: string, id: string) {
+  return request<AdminUserActivity["user"]>(
+    `/admin/users/${id}/block`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function adminUnblockUser(token: string, id: string) {
+  return request<AdminUserActivity["user"]>(
+    `/admin/users/${id}/unblock`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function adminDeleteUser(token: string, id: string) {
+  return request<AdminUserActivity["user"]>(
+    `/admin/users/${id}/delete`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function adminRestoreUser(token: string, id: string) {
+  return request<AdminUserActivity["user"]>(
+    `/admin/users/${id}/restore`,
+    { method: "POST" },
+    token
+  );
+}
+
+export function adminRevokeUserKey(
+  token: string,
+  userId: string,
+  keyId: string,
+  kind: "api" | "rag"
+) {
+  return request<{ id: string; kind: string; revokedAt: string }>(
+    `/admin/users/${userId}/keys/${keyId}/revoke`,
+    { method: "POST", body: JSON.stringify({ kind }) },
+    token
+  );
+}
+
+export function adminRevokeAllKeys(token: string, userId: string) {
+  return request<{ keysRevoked: number }>(
+    `/admin/users/${userId}/keys/revoke-all`,
+    { method: "POST" },
     token
   );
 }

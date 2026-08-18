@@ -1,5 +1,6 @@
 import { Routes, Route } from "react-router-dom";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { AdminRoute } from "./components/AdminRoute";
 import { HomePage } from "./pages/HomePage";
 import { SignupPage } from "./pages/SignupPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -8,6 +9,7 @@ import { DocsPage } from "./pages/DocsPage";
 import { TestKeyPage } from "./pages/TestKeyPage";
 import { RagPage } from "./pages/RagPage";
 import { ChatPage } from "./pages/ChatPage";
+import { AdminPage } from "./pages/AdminPage";
 
 export default function App() {
   return (
@@ -21,6 +23,9 @@ export default function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/test" element={<TestKeyPage />} />
         <Route path="/rag" element={<RagPage />} />
+      </Route>
+      <Route element={<AdminRoute />}>
+        <Route path="/admin" element={<AdminPage />} />
       </Route>
     </Routes>
   );

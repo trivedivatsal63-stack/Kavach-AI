@@ -8,17 +8,30 @@ datasource db {
 }
 
 model User {
-  id               String   @id @default(uuid())
-  email            String   @unique
+  id               String    @id @default(uuid())
+  email            String    @unique
   hashedPassword   String
   name             String?
   // Mock credit system — starter balance only. Drives each key's real
   // LiteLLM max_budget at generation/top-up time; not just a display number.
-  creditBalanceUsd Decimal  @default(5.0) @db.Decimal(10, 2)
-  isAdmin          Boolean  @default(false)
-  createdAt        DateTime @default(now())
+  creditBalanceUsd Decimal   @default(5.0) @db.Decimal(10, 2)
+  // Kept so `db push` does not drop an existing column. Superadmin is `role`.
+  isAdmin          Boolean   @default(false)
+  // "user" | "superadmin" — see utils/roles.ts. Superadmin is the only
+  // privileged role; checked on every /admin request from the live DB row,
+  // not from the JWT, so a demotion takes effect immediately.
+  role             String    @default("user")
+  // "active" | "paused" | "blocked" — paused can still log in (read-only);
+  // blocked cannot. Soft-delete is deletedAt, not a fourth status, so a
+  // blocked user can be restored without losing that distinction.
+  status           String    @default("active")
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
   apiKeys          ApiKey[]
   conversations    Conversation[]
+
+  @@index([role])
+  @@index([status])
 }
 
 // The actual key value is never stored here — only LiteLLM's hashed
@@ -151,4 +164,19 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@map("messages")
+}
+
+// Superadmin actions (pause/block/delete/revoke). Written by admin.service
+// and listed on the admin panel — not used for enforcement.
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  adminId      String   @map("admin_id")
+  targetUserId String?  @map("target_user_id")
+  action       String
+  detail       Json?    @db.JsonB
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([targetUserId])
+  @@map("admin_audit_logs")
 }

@@ -6,6 +6,7 @@ import { usageRouter } from "./usage.routes";
 import { ragRouter } from "./rag.routes";
 import { conversationsRouter } from "./conversations.routes";
 import { completionsRouter } from "./completions.routes";
+import { adminRouter } from "./admin.routes";
 
 export function registerRoutes(app: Router) {
   app.use("/auth", authRouter);
@@ -13,6 +14,7 @@ export function registerRoutes(app: Router) {
   app.use("/credits", creditsRouter);
   app.use("/usage", usageRouter);
   app.use("/conversations", conversationsRouter);
+  app.use("/admin", adminRouter);
   app.use(ragRouter);
   app.use(completionsRouter);
 }

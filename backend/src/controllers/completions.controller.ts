@@ -3,6 +3,9 @@ import { env } from "../config";
 import { getLiveSearchContext } from "../services/liveSearch/liveSearch.service";
 import { formatWebContext } from "../services/liveSearch/webCitationFormat";
 import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constants";
+import { findUserByPresentedApiKey } from "../services/keys.service";
+import { assertCanAct } from "../services/accountStatus.service";
+import { AppError } from "../middleware/errorHandler";
 
 // The real front door for the OpenAI-compatible API — previously developers
 // pointed their OpenAI client straight at LiteLLM (see DocsPage.tsx, now
@@ -39,6 +42,19 @@ export async function completions(req: Request, res: Response) {
     if (!apiKey) {
       openAIError(res, 401, "Missing bearer token.", "authentication_error");
       return;
+    }
+
+    const owner = await findUserByPresentedApiKey(apiKey);
+    if (owner) {
+      try {
+        assertCanAct(owner);
+      } catch (err) {
+        const message =
+          err instanceof AppError ? err.message : "This account cannot use the API.";
+        const status = err instanceof AppError ? err.status : 403;
+        openAIError(res, status, message, "permission_error");
+        return;
+      }
     }
 
     const body = (req.body ?? {}) as Record<string, unknown>;

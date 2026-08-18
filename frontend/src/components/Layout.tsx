@@ -65,6 +65,11 @@ export function Layout({
                 <NavLink to="/test" className={navClass}>
                   Test a key
                 </NavLink>
+                {user?.role === "superadmin" && (
+                  <NavLink to="/admin" className={navClass}>
+                    Admin
+                  </NavLink>
+                )}
                 <NavLink to="/docs" className={navClass}>
                   Docs
                 </NavLink>
@@ -98,6 +103,13 @@ export function Layout({
           </nav>
         </div>
       </header>
+
+      {token && user?.status === "paused" && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+          This account is paused. You can browse your dashboard, but chat, RAG,
+          and API keys are disabled until an administrator unpauses you.
+        </div>
+      )}
 
       <main
         className={`flex flex-1 flex-col ${fullHeight ? "min-h-0 overflow-hidden" : ""}`}

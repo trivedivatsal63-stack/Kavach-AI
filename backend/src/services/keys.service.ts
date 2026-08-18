@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { prisma } from "../models/prisma";
 import { AppError } from "../middleware/errorHandler";
 import {
@@ -51,6 +52,20 @@ export async function revokeKey(userId: string, id: string) {
   });
 
   return { id: updated.id, revokedAt: updated.revokedAt };
+}
+
+export async function findUserByPresentedApiKey(rawKey: string) {
+  const hash = createHash("sha256").update(rawKey).digest("hex");
+  const apiKey = await prisma.apiKey.findFirst({
+    where: {
+      OR: [{ litellmKeyId: hash }, { litellmKeyId: rawKey }],
+      revokedAt: null,
+    },
+    select: {
+      user: { select: { id: true, status: true, deletedAt: true } },
+    },
+  });
+  return apiKey?.user ?? null;
 }
 
 export async function testKey(apiKey: string, message?: string) {

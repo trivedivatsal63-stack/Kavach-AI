@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { User } from "../lib/api";
+import { fetchMe } from "../lib/api";
 import {
   clearAuth,
   getJwtExpiryUnix,
@@ -28,6 +29,17 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function normalizeUser(user: User): User {
+  return {
+    ...user,
+    role: user.role === "superadmin" ? "superadmin" : "user",
+    status:
+      user.status === "paused" || user.status === "blocked"
+        ? user.status
+        : "active",
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -39,12 +51,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  // Hydrate from localStorage once on mount.
+  // Hydrate from localStorage once on mount, then refresh role/status from
+  // the live user row so a promotion or pause is visible without re-login.
   useEffect(() => {
     const stored = loadAuth();
     if (stored) {
       setToken(stored.token);
-      setUser(stored.user);
+      setUser(normalizeUser(stored.user));
+      void fetchMe(stored.token)
+        .then((fresh) => {
+          setUser(fresh);
+          saveAuth(stored.token, fresh);
+        })
+        .catch(() => {
+          // Keep the stored user if /auth/me fails for a transient reason;
+          // 401/blocked is handled by the unauthorized listener.
+        });
     }
     setReady(true);
   }, []);
@@ -77,9 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [logout]);
 
   const setAuth = useCallback((newToken: string, newUser: User) => {
-    saveAuth(newToken, newUser);
+    const fresh = normalizeUser(newUser);
+    saveAuth(newToken, fresh);
     setToken(newToken);
-    setUser(newUser);
+    setUser(fresh);
   }, []);
 
   const updateUser = useCallback(

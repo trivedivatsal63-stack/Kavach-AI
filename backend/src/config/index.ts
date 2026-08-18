@@ -58,4 +58,10 @@ export const env = {
 
   /** Self-hosted SearXNG instance — see services/liveSearch/. */
   searxngBaseUrl: optional("SEARXNG_URL", "http://127.0.0.1:8888"),
+
+  /**
+   * Email promoted to superadmin on boot (and on matching signup/login).
+   * Empty means: if no superadmin exists yet, the earliest user is promoted.
+   */
+  superadminEmail: optional("SUPERADMIN_EMAIL", "").trim().toLowerCase(),
 } as const;

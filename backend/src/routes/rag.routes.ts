@@ -1,5 +1,5 @@
 import express, { Router } from "express";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireActiveAccount } from "../middleware/auth";
 import * as documentsController from "../controllers/rag/documents.controller";
 import * as keysController from "../controllers/rag/keys.controller";
 import * as chatController from "../controllers/rag/chat.controller";
@@ -12,6 +12,7 @@ const documentsRouter = Router();
 documentsRouter.use(requireAuth);
 documentsRouter.post(
   "/",
+  requireActiveAccount,
   express.raw({
     type: [
       "application/pdf",
@@ -27,17 +28,17 @@ documentsRouter.post(
 );
 documentsRouter.get("/", documentsController.list);
 documentsRouter.get("/:id/chunks", documentsController.listChunks);
-documentsRouter.delete("/:id", documentsController.remove);
+documentsRouter.delete("/:id", requireActiveAccount, documentsController.remove);
 
 const keysRouter = Router();
 keysRouter.use(requireAuth);
-keysRouter.post("/", keysController.create);
+keysRouter.post("/", requireActiveAccount, keysController.create);
 keysRouter.get("/", keysController.list);
 keysRouter.delete("/:id", keysController.revoke);
 
 const chatRouter = Router();
 chatRouter.use(requireAuth);
-chatRouter.post("/", chatController.chat);
+chatRouter.post("/", requireActiveAccount, chatController.chat);
 
 ragRouter.use("/rag/documents", documentsRouter);
 ragRouter.use("/rag/keys", keysRouter);

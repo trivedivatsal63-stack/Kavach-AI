@@ -25,3 +25,11 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     next(err);
   }
 }
+
+export async function me(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await authService.me(req.userId!));
+  } catch (err) {
+    next(err);
+  }
+}

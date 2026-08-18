@@ -9,6 +9,7 @@ import {
 } from "../../services/rag/completion.service";
 import { filterOwnedDocumentIds } from "./chat.controller";
 import { AppError } from "../../middleware/errorHandler";
+import { assertCanAct } from "../../services/accountStatus.service";
 
 export async function query(req: Request, res: Response, next: NextFunction) {
   try {
@@ -44,6 +45,7 @@ export async function query(req: Request, res: Response, next: NextFunction) {
     if (!user) {
       throw new AppError(401, "Invalid or revoked RAG key.");
     }
+    assertCanAct(user);
 
     const balance = user.creditBalanceUsd.toNumber();
     await updateLiteLLMKeyBudget(ragKey.tokenId, balance).catch(() => {});

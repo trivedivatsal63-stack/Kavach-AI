@@ -133,6 +133,15 @@ export function AppSidebar({
           label="Dashboard"
           onClick={() => navigate("/dashboard")}
         />
+        {user?.role === "superadmin" && (
+          <NavItem
+            active={false}
+            chip="🛡️"
+            chipColor="bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400"
+            label="Admin"
+            onClick={() => navigate("/admin")}
+          />
+        )}
         <NavItem
           active={false}
           chip="📚"
