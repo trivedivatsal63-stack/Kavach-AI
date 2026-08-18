@@ -17,6 +17,13 @@ export interface AuthResponse {
   user: User;
 }
 
+export interface OtpChallenge {
+  requiresOtp: true;
+  email: string;
+}
+
+export type OtpPurpose = "signup" | "login" | "reset";
+
 export interface ApiKeySummary {
   id: string;
   createdAt: string;
@@ -95,16 +102,44 @@ async function request<T>(
 }
 
 export function signup(email: string, password: string, name: string) {
-  return request<AuthResponse>("/auth/signup", {
+  return request<OtpChallenge>("/auth/signup", {
     method: "POST",
     body: JSON.stringify({ email, password, name }),
   });
 }
 
 export function login(email: string, password: string) {
-  return request<AuthResponse>("/auth/login", {
+  return request<OtpChallenge>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export function verifyOtp(email: string, purpose: OtpPurpose, code: string) {
+  return request<AuthResponse>("/auth/verify-otp", {
+    method: "POST",
+    body: JSON.stringify({ email, purpose, code }),
+  });
+}
+
+export function resendOtp(email: string, purpose: OtpPurpose) {
+  return request<OtpChallenge>("/auth/resend-otp", {
+    method: "POST",
+    body: JSON.stringify({ email, purpose }),
+  });
+}
+
+export function forgotPassword(email: string) {
+  return request<{ ok: true }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function resetPassword(email: string, code: string, password: string) {
+  return request<{ ok: true }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ email, code, password }),
   });
 }
 

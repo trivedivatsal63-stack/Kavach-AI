@@ -10,6 +10,7 @@ import { TestKeyPage } from "./pages/TestKeyPage";
 import { RagPage } from "./pages/RagPage";
 import { ChatPage } from "./pages/ChatPage";
 import { AdminPage } from "./pages/AdminPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <Route path="/" element={<HomePage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/docs" element={<DocsPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />

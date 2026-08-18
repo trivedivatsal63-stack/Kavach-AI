@@ -26,12 +26,33 @@ model User {
   // blocked user can be restored without losing that distinction.
   status           String    @default("active")
   deletedAt        DateTime?
+  emailVerifiedAt  DateTime?
   createdAt        DateTime  @default(now())
   apiKeys          ApiKey[]
   conversations    Conversation[]
 
   @@index([role])
   @@index([status])
+}
+
+// Short-lived hashed OTPs for signup verification, login 2FA, and password
+// reset. Plaintext codes are emailed (or logged when SMTP is unset) and
+// never stored. One active row per (email, purpose) at a time — sending a
+// new code consumes any previous unused one.
+model EmailOtp {
+  id         String    @id @default(uuid())
+  email      String
+  purpose    String
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+  // Signup-only: { passwordHash, name } so the User row is created only
+  // after the email is proven. Unused for login/reset.
+  payload    Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, purpose, createdAt])
 }
 
 // The actual key value is never stored here — only LiteLLM's hashed

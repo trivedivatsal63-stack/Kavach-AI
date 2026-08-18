@@ -7,6 +7,7 @@ import { markInterruptedAsFailed } from "./services/rag/documents.service";
 import { pingQdrant } from "./services/rag/qdrant.service";
 import { purgeLegacyNonUuidUsers } from "./jobs/purgeLegacyUsers";
 import { bootstrapSuperadmin } from "./services/auth.service";
+import { smtpStatus } from "./services/mail.service";
 
 async function bootstrap() {
   try {
@@ -39,6 +40,7 @@ async function bootstrap() {
   app.listen(env.port, () => {
     console.log(`API listening on port ${env.port}`);
     console.log(`LiteLLM gateway expected at ${env.litellmBaseUrl}`);
+    console.log(`[mail] SMTP ${smtpStatus()}`);
   });
 }
 

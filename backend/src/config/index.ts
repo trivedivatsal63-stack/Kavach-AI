@@ -64,4 +64,11 @@ export const env = {
    * Empty means: if no superadmin exists yet, the earliest user is promoted.
    */
   superadminEmail: optional("SUPERADMIN_EMAIL", "").trim().toLowerCase(),
+
+  smtpHost: optional("SMTP_HOST", "").trim(),
+  smtpPort: positiveInt("SMTP_PORT", 587),
+  smtpUser: optional("SMTP_USER", ""),
+  smtpPass: optional("SMTP_PASS", ""),
+  smtpFrom: optional("SMTP_FROM", "").trim(),
+  smtpSecure: optional("SMTP_SECURE", "").toLowerCase() === "true",
 } as const;
