@@ -12,7 +12,7 @@ const CURL_EXAMPLE = `curl https://your-gateway/v1/chat/completions \\
     "messages": [{"role": "user", "content": "Summarize this clause..."}]
   }'`;
 
-const flowChat = ["Your app", "HarrierKavach gateway", "LiteLLM", "vLLM"];
+const flowChat = ["Your app", "Harrier gateway", "LiteLLM", "vLLM"];
 const flowRag = ["Your documents", "Chunk + embed", "Qdrant", "Cited answer"];
 
 const features = [
@@ -45,7 +45,7 @@ export function HomePage() {
           className="dot-grid pointer-events-none absolute inset-0 text-gray-400 dark:text-gray-600"
         />
         <div className="relative mx-auto flex w-full max-w-7xl flex-col items-center gap-7 px-4 py-24 text-center sm:px-6 sm:py-28">
-          <ShieldMark className="h-14 w-14 drop-shadow-sm" />
+          <ShieldMark className="h-16 w-auto drop-shadow-sm sm:h-20" />
           <span className="eyebrow">
             <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
             Self-hosted LLM gateway
@@ -57,7 +57,7 @@ export function HomePage() {
             </span>
           </h1>
           <p className="max-w-xl text-base text-gray-600 sm:text-lg dark:text-gray-400">
-            HarrierKavach runs a fully self-hosted stack — vLLM serving
+            Harrier runs a fully self-hosted stack — vLLM serving
             qwen2.5-7b through LiteLLM — with API keys, budgets, usage
             tracking and a private RAG store, all on infrastructure you
             control.

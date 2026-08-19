@@ -62,11 +62,8 @@ export function AppSidebar({
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-gray-200 bg-white dark:border-neutral-800 dark:bg-black">
       <div className="flex items-center gap-2 px-4 py-4">
-        <Link to="/" className="flex items-center gap-2">
-          <ShieldMark className="h-6 w-6" />
-          <span className="text-sm font-semibold tracking-tight text-gray-900 dark:text-white">
-            HarrierKavach AI
-          </span>
+        <Link to="/" className="block">
+          <ShieldMark className="h-[60px] w-[180px] max-w-[180px]" />
         </Link>
       </div>
 

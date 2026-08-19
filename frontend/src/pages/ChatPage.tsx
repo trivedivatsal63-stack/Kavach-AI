@@ -65,7 +65,7 @@ export function ChatPage() {
 
           {!activeId ? (
             <WelcomeScreen
-              title="Welcome to HarrierKavach AI"
+              title="Welcome to Harrier"
               subtitle="Ask anything, ground answers in your documents, or search the live web — all on infrastructure you control."
               actions={[
                 {
@@ -111,7 +111,7 @@ export function ChatPage() {
             onChange={setDraft}
             onSubmit={() => void handleSend()}
             disabled={sending}
-            placeholder="Message HarrierKavach AI…"
+            placeholder="Message Harrier…"
             webSearch={webSearch}
             onToggleWebSearch={() => setWebSearch((v) => !v)}
           />

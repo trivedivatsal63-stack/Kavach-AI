@@ -93,7 +93,7 @@ export function Composer({
         </div>
       </form>
       <p className="mt-2 text-center text-xs text-gray-400 dark:text-gray-600">
-        HarrierKavach AI may generate inaccurate information. Model: {MODEL_NAME}
+        Harrier may generate inaccurate information. Model: {MODEL_NAME}
       </p>
     </div>
   );
