@@ -4,7 +4,7 @@
 const MAX_MESSAGE_CHARS = 4000;
 
 // Real current model — backend/src/utils/rag.constants.ts's RAG_CHAT_MODEL.
-const MODEL_NAME = "qwen2.5-7b";
+const MODEL_NAME = "qwen3-30b-a3b";
 
 export function Composer({
   value,
