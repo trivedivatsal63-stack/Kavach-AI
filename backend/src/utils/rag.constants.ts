@@ -1,6 +1,8 @@
 // Central constants for the RAG module. Kept in one file so chunking
 // behavior, limits, and naming are greppable and consistent everywhere.
 
+import { env } from "../config";
+
 export const DOCUMENT_STATUS = {
   QUEUED: "queued",
   PROCESSING: "processing",
@@ -23,7 +25,7 @@ export const DEFAULT_QDRANT_COLLECTION = "rag_documents";
 // single-model hardcode as backend/src/litellm.ts. RAG answers are generated
 // through LiteLLM with a per-user key, so the existing credit -> max_budget
 // loop also gates RAG spend.
-export const RAG_CHAT_MODEL = "qwen2.5-7b";
+export const RAG_CHAT_MODEL = env.ragChatModel;
 
 // ── Chunking (characters, not tokens — token count is estimated) ────────
 // Structure-aware chunker: paragraphs group up to MAX_CHUNK_CHARS, tables
@@ -57,7 +59,7 @@ export const EMBED_BATCH_SIZE = 32;
 // in the root .env) — this is the hard ceiling the dynamic token-budget
 // retrieval cutoff in retrieval.service.ts is built around. Update both
 // together; a mismatch here silently reintroduces context-overflow risk.
-export const MODEL_MAX_CONTEXT_TOKENS = 8192;
+export const MODEL_MAX_CONTEXT_TOKENS = env.modelMaxContextTokens;
 
 // Headroom reserved for the model's actual answer. Without this the token
 // budget would greedily fill with retrieved context and leave no room to
