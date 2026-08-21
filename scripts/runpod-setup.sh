@@ -33,47 +33,47 @@ if ! command -v node >/dev/null 2>&1 || ! node -v | grep -qE '^v(2[0-9]|[3-9][0-
 fi
 echo "    node $(node -v) / npm $(npm -v)"
 
-echo "==> [2/10] Postgres cluster under /workspace/pgdata"
+echo "==> [2/10] Postgres cluster under /var/lib/postgresql/pgdata"
 PG_VERSION="$(ls /usr/lib/postgresql | sort -V | tail -n1)"
 PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
 ln -sfn "${PG_BIN}" /workspace/bin/pg_bin
 echo "    PostgreSQL ${PG_VERSION} → /workspace/bin/pg_bin"
 
-if [[ ! -f /workspace/pgdata/PG_VERSION ]]; then
-  mkdir -p /workspace/pgdata
-  chown -R postgres:postgres /workspace/pgdata
-  sudo -u postgres "${PG_BIN}/initdb" -D /workspace/pgdata --auth-local=peer --auth-host=scram-sha-256
+if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
+  mkdir -p /var/lib/postgresql/pgdata
+  chown -R postgres:postgres /var/lib/postgresql/pgdata
+  su postgres -c "${PG_BIN}/initdb -D /var/lib/postgresql/pgdata --auth-local=peer --auth-host=scram-sha-256"
   # Allow password auth from localhost (backend / litellm)
   {
     echo "listen_addresses = '127.0.0.1'"
     echo "port = 5432"
     echo "unix_socket_directories = '/var/run/postgresql'"
-  } >> /workspace/pgdata/postgresql.conf
+  } >> /var/lib/postgresql/pgdata/postgresql.conf
   # Ensure scram for TCP localhost
-  if ! grep -qE '^host\s+all\s+all\s+127\.0\.0\.1/32' /workspace/pgdata/pg_hba.conf; then
-    echo "host all all 127.0.0.1/32 scram-sha-256" >> /workspace/pgdata/pg_hba.conf
+  if ! grep -qE '^host\s+all\s+all\s+127\.0\.0\.1/32' /var/lib/postgresql/pgdata/pg_hba.conf; then
+    echo "host all all 127.0.0.1/32 scram-sha-256" >> /var/lib/postgresql/pgdata/pg_hba.conf
   fi
 fi
-chown -R postgres:postgres /workspace/pgdata
+chown -R postgres:postgres /var/lib/postgresql/pgdata
 mkdir -p /var/run/postgresql
 chown postgres:postgres /var/run/postgresql
 
 # One-time cluster + databases (password synced later by runpod-deploy.sh
 # once .env secrets exist — setup often runs before .env is filled).
-if [[ ! -f /workspace/pgdata/.kavach_initialized ]]; then
+if [[ ! -f /var/lib/postgresql/pgdata/.kavach_initialized ]]; then
   echo "    Creating databases (litellm, dashboard) via peer auth…"
-  sudo -u postgres "${PG_BIN}/pg_ctl" -D /workspace/pgdata -l "${LOG_DIR}/postgres-init.log" start
+  su postgres -c "${PG_BIN}/pg_ctl -D /var/lib/postgresql/pgdata -l ${LOG_DIR}/postgres-init.log start"
   sleep 2
 
-  sudo -u postgres "${PG_BIN}/psql" -d postgres -v ON_ERROR_STOP=1 <<'EOSQL'
+  su postgres -c "${PG_BIN}/psql -d postgres -v ON_ERROR_STOP=1" <<'EOSQL'
 SELECT 'CREATE DATABASE litellm OWNER postgres'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'litellm')\gexec
 SELECT 'CREATE DATABASE dashboard OWNER postgres'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dashboard')\gexec
 EOSQL
 
-  sudo -u postgres "${PG_BIN}/pg_ctl" -D /workspace/pgdata stop
-  touch /workspace/pgdata/.kavach_initialized
+  su postgres -c "${PG_BIN}/pg_ctl -D /var/lib/postgresql/pgdata stop"
+  touch /var/lib/postgresql/pgdata/.kavach_initialized
   echo "    Postgres databases ready (password will be set on deploy)."
 else
   echo "    Postgres already initialized (skipping)."

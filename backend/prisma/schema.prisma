@@ -106,7 +106,7 @@ model RagChunk {
   // search — declared here as Unsupported so `db push` knows it exists and
   // never proposes dropping it, without Prisma trying to manage its
   // generation expression itself (that stays owned by pool.ts).
-  contentTsv  Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, content)")) @map("content_tsv")
+  contentTsv  Unsupported("tsvector")? @map("content_tsv")
   document    RagDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, chunkIndex])

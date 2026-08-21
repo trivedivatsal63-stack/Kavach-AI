@@ -118,14 +118,14 @@ if [[ -x /workspace/bin/pg_bin/psql ]]; then
   # Start briefly via peer auth if not already up under supervisord
   if ! /workspace/bin/pg_bin/pg_isready -h /var/run/postgresql -q 2>/dev/null \
      && ! /workspace/bin/pg_bin/pg_isready -h 127.0.0.1 -q 2>/dev/null; then
-    sudo -u postgres /workspace/bin/pg_bin/pg_ctl -D /workspace/pgdata -l "${LOG_DIR}/postgres-predeploy.log" start || true
+    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /var/lib/postgresql/pgdata -l "${LOG_DIR}/postgres-predeploy.log" start || true
     sleep 2
     STARTED_PG_FOR_SYNC=1
   fi
-  sudo -u postgres /workspace/bin/pg_bin/psql -d postgres -v ON_ERROR_STOP=1 \
+  runuser -u postgres -- /workspace/bin/pg_bin/psql -d postgres -v ON_ERROR_STOP=1 \
     -c "ALTER USER postgres WITH PASSWORD '${POSTGRES_PASSWORD//\'/\'\'}'" || true
   if [[ "${STARTED_PG_FOR_SYNC:-0}" == "1" ]]; then
-    sudo -u postgres /workspace/bin/pg_bin/pg_ctl -D /workspace/pgdata stop || true
+    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /var/lib/postgresql/pgdata stop || true
   fi
 fi
 
