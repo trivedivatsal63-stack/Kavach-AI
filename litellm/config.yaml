@@ -22,6 +22,14 @@ model_list:
       api_key: not-needed
       input_cost_per_token: 0.0001
       output_cost_per_token: 0.0002
+  # Production RunPod profile - Qwen3-30B-A3B served by native vLLM on the pod.
+  - model_name: qwen3-30b-a3b
+    litellm_params:
+      model: openai/qwen3-30b-a3b
+      api_base: os.environ/VLLM_API_BASE
+      api_key: not-needed
+      input_cost_per_token: 0.0001
+      output_cost_per_token: 0.0002
 
 litellm_settings:
   drop_params: true

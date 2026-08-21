@@ -16,6 +16,8 @@ Host Postgres :5432  ← LiteLLM (via host.docker.internal) + backend
 
 Full steps: [`scripts/LOCAL_RUN.md`](scripts/LOCAL_RUN.md)
 
+RunPod whole-stack (native processes, no Docker): [`scripts/RUNPOD_DEPLOY.md`](scripts/RUNPOD_DEPLOY.md)
+
 ## Quick start
 
 ```powershell
