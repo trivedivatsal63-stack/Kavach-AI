@@ -100,7 +100,7 @@ upsert_env "LITELLM_BASE_URL" "http://127.0.0.1:4000" "${ENV_FILE}"
 upsert_env "VLLM_BASE_URL" "http://127.0.0.1:8000" "${ENV_FILE}"
 upsert_env "QDRANT_URL" "http://127.0.0.1:6333" "${ENV_FILE}"
 upsert_env "EMBEDDING_BASE_URL" "http://127.0.0.1:8002" "${ENV_FILE}"
-upsert_env "SEARXNG_URL" "http://127.0.0.1:8888" "${ENV_FILE}"
+upsert_env "SEARXNG_URL" "http://127.0.0.1:8889" "${ENV_FILE}"
 upsert_env "PORT" "4001" "${ENV_FILE}"
 
 set -a
