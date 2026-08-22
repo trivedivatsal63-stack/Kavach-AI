@@ -109,7 +109,7 @@ if [[ ! -x "${QDRANT_BIN}" ]]; then
   curl -fsSL \
     "https://github.com/qdrant/qdrant/releases/download/${QDRANT_VER}/qdrant-x86_64-unknown-linux-musl.tar.gz" \
     -o "${TMP_TGZ}"
-  tar -xzf "${TMP_TGZ}" -C /workspace/qdrant
+  tar --no-same-owner -xzf "${TMP_TGZ}" -C /workspace/qdrant
   rm -f "${TMP_TGZ}"
   # tarball may unpack as ./qdrant or nested
   if [[ ! -x "${QDRANT_BIN}" ]]; then
