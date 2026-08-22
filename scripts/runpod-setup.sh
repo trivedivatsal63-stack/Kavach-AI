@@ -99,6 +99,14 @@ if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
 fi
 /workspace/venvs/embedding/bin/pip install --upgrade pip
 /workspace/venvs/embedding/bin/pip install -r "${REPO_ROOT}/embedding/requirements.txt"
+# fastembed pulls in the CPU-only onnxruntime as a transitive dependency;
+# it does NOT get replaced by the onnxruntime-gpu install above (confirmed
+# live: both ended up co-installed, and whichever wins the shared
+# `onnxruntime` import namespace determined the available providers --
+# here it silently fell back to CPU-only, with no error, just a slow
+# 250%-CPU embedding service instead of using the GPU that was sitting
+# idle). Force onnxruntime-gpu to be the only one present.
+/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime 2>/dev/null || true
 
 echo "==> [6/10] Qdrant binary"
 QDRANT_BIN="/workspace/qdrant/qdrant"
