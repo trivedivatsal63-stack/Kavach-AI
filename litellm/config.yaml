@@ -4,20 +4,19 @@
 # http://localhost:4000.
 
 model_list:
-  # Public name clients send. Must match VLLM_SERVED_NAME / backend CHAT_MODEL.
-  - model_name: qwen2.5-1.5b
-    litellm_params:
-      model: openai/qwen2.5-1.5b
-      api_base: os.environ/VLLM_API_BASE
-      api_key: not-needed
-      # Placeholder rates so budget/spend work for self-hosted models.
-      input_cost_per_token: 0.0001
-      output_cost_per_token: 0.0002
-  # Alias for keys/UI still using the previous 7b name. Same weights as above —
-  # this machine's vLLM is serving the 1.5B profile, not 7B.
+  # Public names clients send. Must match VLLM_SERVED_NAME / backend CHAT_MODEL.
+  # Dev laptop: vLLM serves qwen2.5-7b (see root .env VLLM_SERVED_NAME).
+  # Keep 1.5b as alias so old keys/frontend still work — both point to same vLLM.
   - model_name: qwen2.5-7b
     litellm_params:
-      model: openai/qwen2.5-1.5b
+      model: openai/qwen2.5-7b
+      api_base: os.environ/VLLM_API_BASE
+      api_key: not-needed
+      input_cost_per_token: 0.0001
+      output_cost_per_token: 0.0002
+  - model_name: qwen2.5-1.5b
+    litellm_params:
+      model: openai/qwen2.5-7b
       api_base: os.environ/VLLM_API_BASE
       api_key: not-needed
       input_cost_per_token: 0.0001

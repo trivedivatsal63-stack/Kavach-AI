@@ -1,4 +1,5 @@
-import { parse as parseHtml } from "node-html-parser";
+import { JSDOM } from "jsdom";
+import { Readability } from "@mozilla/readability";
 import {
   PAGE_FETCH_MAX_BYTES,
   PAGE_FETCH_MAX_CHARS,
@@ -6,24 +7,16 @@ import {
   USER_AGENT,
 } from "../../utils/liveSearch.constants";
 
-const STRIP_SELECTORS = [
-  "head",
-  "script",
-  "style",
-  "noscript",
-  "nav",
-  "header",
-  "footer",
-  "svg",
-  "iframe",
-  "form",
-];
-
 // Fetches a search result's actual page and extracts its real text — the
 // whole reason live search reads full pages instead of trusting SearXNG's
 // thin one-line snippet. Returns null on any failure (timeout, non-HTML,
 // error status) rather than throwing — callers fall back to the snippet for
 // that one result instead of failing the whole search.
+//
+// Extraction uses Mozilla Readability (same as Firefox reader mode) for
+// article-focused text, falling back to naive body text on failure. This
+// removes nav/chrome more reliably than manual strip selectors, especially
+// for Wikipedia/docs.
 export async function fetchPageText(url: string): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -47,29 +40,36 @@ export async function fetchPageText(url: string): Promise<string | null> {
     const html = await readCapped(res, PAGE_FETCH_MAX_BYTES);
     if (html === null) return null;
 
-    const root = parseHtml(html);
-    for (const selector of STRIP_SELECTORS) {
-      for (const el of root.querySelectorAll(selector)) el.remove();
-    }
-
-    // Prefer <body> specifically — falling back to root would otherwise
-    // still walk the doctype/head area on malformed markup. Collapsing ALL
-    // whitespace (not just runs of spaces) to single spaces is deliberate:
-    // this text only ever goes into an LLM prompt, never rendered, so
-    // preserving paragraph breaks buys nothing and real pages (Wikipedia
-    // especially) otherwise leave a wall of near-empty lines from nav/
-    // accessibility chrome between visible text nodes.
-    const body = root.querySelector("body") ?? root;
-    const text = body.text
-      .replace(/^<!DOCTYPE[^>]*>\s*/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const text = extractWithReadability(html, url);
     if (!text) return null;
 
     return text.slice(0, PAGE_FETCH_MAX_CHARS);
   } catch {
     // Timeout (AbortError), DNS failure, connection reset, malformed HTML —
     // all treated the same: this one source didn't pan out, move on.
+    return null;
+  }
+}
+
+function extractWithReadability(html: string, url: string): string | null {
+  try {
+    const dom = new JSDOM(html, { url });
+    const reader = new Readability(dom.window.document);
+    const article = reader.parse();
+    if (article?.textContent) {
+      const cleaned = article.textContent.replace(/\s+/g, " ").trim();
+      if (cleaned.length >= 120) return cleaned;
+    }
+  } catch {
+    // fall through to fallback
+  }
+  // Fallback: naive body text if Readability fails or yields too little
+  try {
+    const dom = new JSDOM(html);
+    const bodyText = dom.window.document.body?.textContent ?? "";
+    const cleaned = bodyText.replace(/\s+/g, " ").trim();
+    return cleaned || null;
+  } catch {
     return null;
   }
 }

@@ -79,4 +79,5 @@ export const env = {
   smtpPass: optional("SMTP_PASS", ""),
   smtpFrom: optional("SMTP_FROM", "").trim(),
   smtpSecure: optional("SMTP_SECURE", "").toLowerCase() === "true",
+  smtpTlsInsecure: optional("SMTP_TLS_INSECURE", "").toLowerCase() === "true",
 } as const;

@@ -1,0 +1,28 @@
+name: Autodeploy to RunPod
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH to RunPod pod
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.POD_HOST }}
+          port: ${{ secrets.POD_PORT }}
+          username: ${{ secrets.POD_USER }}
+          key: ${{ secrets.POD_SSH_KEY }}
+          script: |
+            set -e
+            cd /workspace/kavach-ai
+            echo "==> Pulling latest main"
+            git fetch origin main
+            git reset --hard origin/main
+            echo "==> Running incremental redeploy"
+            ./scripts/redeploy.sh
+            echo "==> Done"
+            supervisorctl -c scripts/supervisord.conf status | head -20
