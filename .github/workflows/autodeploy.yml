@@ -2,7 +2,7 @@ name: Autodeploy to RunPod
 
 on:
   push:
-    branches: [main]
+    branches: [deployment-state]
   workflow_dispatch:
 
 jobs:
@@ -19,9 +19,9 @@ jobs:
           script: |
             set -e
             cd /workspace/kavach-ai
-            echo "==> Pulling latest main"
-            git fetch origin main
-            git reset --hard origin/main
+            echo "==> Pulling latest deployment-state"
+            git fetch origin deployment-state
+            git reset --hard origin/deployment-state
             echo "==> Running incremental redeploy"
             ./scripts/redeploy.sh
             echo "==> Done"
