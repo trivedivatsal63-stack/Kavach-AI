@@ -1,5 +1,3 @@
-import { JSDOM } from "jsdom";
-import { Readability } from "@mozilla/readability";
 import {
   PAGE_FETCH_MAX_BYTES,
   PAGE_FETCH_MAX_CHARS,
@@ -13,10 +11,11 @@ import {
 // error status) rather than throwing — callers fall back to the snippet for
 // that one result instead of failing the whole search.
 //
-// Extraction uses Mozilla Readability (same as Firefox reader mode) for
-// article-focused text, falling back to naive body text on failure. This
-// removes nav/chrome more reliably than manual strip selectors, especially
-// for Wikipedia/docs.
+// Extraction prefers Mozilla Readability + jsdom when available (Firefox
+// reader mode, better article focus), but jsdom 30 is incompatible with
+// Node 20 on the pod (undici webidl). To avoid crash-looping the entire
+// backend on a single import, jsdom/Readability are loaded lazily and any
+// load failure falls back to node-html-parser (already in deps).
 export async function fetchPageText(url: string): Promise<string | null> {
   try {
     const controller = new AbortController();
@@ -52,7 +51,11 @@ export async function fetchPageText(url: string): Promise<string | null> {
 }
 
 function extractWithReadability(html: string, url: string): string | null {
+  // Try Readability + jsdom (lazy, may be incompatible with Node 20 pod)
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { JSDOM } = require("jsdom");
+    const { Readability } = require("@mozilla/readability");
     const dom = new JSDOM(html, { url });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
@@ -61,14 +64,28 @@ function extractWithReadability(html: string, url: string): string | null {
       if (cleaned.length >= 120) return cleaned;
     }
   } catch {
-    // fall through to fallback
+    // fall through
   }
-  // Fallback: naive body text if Readability fails or yields too little
+  // Fallback 1: jsdom body text
   try {
+    const { JSDOM } = require("jsdom");
     const dom = new JSDOM(html);
     const bodyText = dom.window.document.body?.textContent ?? "";
     const cleaned = bodyText.replace(/\s+/g, " ").trim();
-    return cleaned || null;
+    if (cleaned) return cleaned;
+  } catch {
+    // fall through
+  }
+  // Fallback 2: node-html-parser (always works, no jsdom)
+  try {
+    const { parse } = require("node-html-parser");
+    const root = parse(html);
+    for (const sel of ["script", "style", "noscript", "nav", "header", "footer", "svg", "iframe", "form"]) {
+      for (const el of root.querySelectorAll(sel)) el.remove();
+    }
+    const body = root.querySelector("body") ?? root;
+    const text = body.text.replace(/\s+/g, " ").trim();
+    return text || null;
   } catch {
     return null;
   }
