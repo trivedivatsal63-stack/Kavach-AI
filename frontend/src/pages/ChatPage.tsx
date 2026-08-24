@@ -65,7 +65,7 @@ export function ChatPage() {
 
           {!activeId ? (
             <WelcomeScreen
-              title="Welcome to Harrier"
+              title="Welcome to Harrier Kavach"
               subtitle="Ask anything, ground answers in your documents, or search the live web — all on infrastructure you control."
               actions={[
                 {
