@@ -4,31 +4,46 @@
 # http://localhost:4000.
 
 model_list:
-  # Public names clients send. Must match VLLM_SERVED_NAME / backend CHAT_MODEL.
-  # Dev laptop: vLLM serves qwen2.5-7b (see root .env VLLM_SERVED_NAME).
-  # Keep 1.5b as alias so old keys/frontend still work — both point to same vLLM.
-  - model_name: qwen2.5-7b
+  # Primary: Muse Glimmer 30B AWQ/INT4 (compressed-tensors, W4A16, group 32).
+  # Must match VLLM_SERVED_NAME / backend CHAT_MODEL.
+  - model_name: muse-glimmer-30b-awq
     litellm_params:
-      model: openai/qwen2.5-7b
+      model: openai/muse-glimmer-30b-awq
       api_base: os.environ/VLLM_API_BASE
       api_key: not-needed
       input_cost_per_token: 0.0001
       output_cost_per_token: 0.0002
-  - model_name: qwen2.5-1.5b
+  # Alias so old UIs/tests that send the base name still resolve (same vLLM).
+  - model_name: muse-glimmer-30b
     litellm_params:
-      model: openai/qwen2.5-7b
+      model: openai/muse-glimmer-30b-awq
       api_base: os.environ/VLLM_API_BASE
       api_key: not-needed
       input_cost_per_token: 0.0001
       output_cost_per_token: 0.0002
-  # Production RunPod profile - Qwen3-30B-A3B served by native vLLM on the pod.
-  - model_name: qwen3-30b-a3b
-    litellm_params:
-      model: openai/qwen3-30b-a3b
-      api_base: os.environ/VLLM_API_BASE
-      api_key: not-needed
-      input_cost_per_token: 0.0001
-      output_cost_per_token: 0.0002
+  # Rollback aliases — Qwen (local dev + revert path). Commented for production migration.
+  # Uncomment the block below to revert VLLM_MODEL to Qwen without editing code.
+  # - model_name: qwen2.5-7b
+  #   litellm_params:
+  #     model: openai/qwen2.5-7b
+  #     api_base: os.environ/VLLM_API_BASE
+  #     api_key: not-needed
+  #     input_cost_per_token: 0.0001
+  #     output_cost_per_token: 0.0002
+  # - model_name: qwen2.5-1.5b
+  #   litellm_params:
+  #     model: openai/qwen2.5-7b
+  #     api_base: os.environ/VLLM_API_BASE
+  #     api_key: not-needed
+  #     input_cost_per_token: 0.0001
+  #     output_cost_per_token: 0.0002
+  # - model_name: qwen3-30b-a3b
+  #   litellm_params:
+  #     model: openai/qwen3-30b-a3b
+  #     api_base: os.environ/VLLM_API_BASE
+  #     api_key: not-needed
+  #     input_cost_per_token: 0.0001
+  #     output_cost_per_token: 0.0002
 
 litellm_settings:
   drop_params: true

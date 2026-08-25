@@ -7,11 +7,11 @@
 # attention-backend workarounds needed (all of that was specific to the
 # previous pod's older driver, CUDA 12.8 ceiling).
 #
-# Serving stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ: the original intended
-# model -- sparse MoE (~3B active params/token, vs the dense 32B fallback
-# used on the old pod) with real AWQ/Marlin quantization (faster inference
-# than bitsandbytes). Its own config.json ships max_position_embeddings=262144
-# with rope_scaling=null, so no --rope-scaling flag needed here either.
+# Serving cyankiwi/Muse-Glimmer-30B-AWQ-INT4: dense 29.6B + ViT-G/14, compressed-tensors
+# W4A16 pack-quantized (group 32, asymmetric). No --quantization flag (auto).
+# Requires vLLM nightly with PR 51655 (muse_glimmer model + parsers).
+# Channel format: to=self reasoning, ATEM tool calls — needs both parsers + generation-config auto.
+# Conservative concurrency: max_num_seqs 4 for 131K on 48GB A6000; nightly default would be 16.
 set -euo pipefail
 
 # ninja (needed by flashinfer to JIT-compile sampling kernels at startup)
@@ -24,6 +24,10 @@ exec /workspace/venvs/vllm/bin/vllm serve "${VLLM_MODEL}" \
   --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
   --max-model-len "${VLLM_MAX_MODEL_LEN}" \
   --max-num-seqs "${VLLM_MAX_NUM_SEQS}" \
+  --enable-auto-tool-choice \
+  --tool-call-parser muse_glimmer \
+  --reasoning-parser muse_glimmer \
+  --generation-config auto \
   --dtype auto \
   --host 0.0.0.0 \
   --port 8000
