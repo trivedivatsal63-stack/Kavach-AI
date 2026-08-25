@@ -37,6 +37,14 @@ export const env = {
   litellmMasterKey: () => required("LITELLM_MASTER_KEY"),
   /** Must match litellm/config.yaml model_name and VLLM_SERVED_NAME */
   chatModel: optional("CHAT_MODEL", "qwen2.5-1.5b"),
+  /** Must match litellm/config.yaml model_name used for RAG answers */
+  ragChatModel: optional("RAG_CHAT_MODEL", "qwen2.5-7b"),
+  /**
+   * Must match vllm's --max-model-len (VLLM_MAX_MODEL_LEN in the runpod env)
+   * for whichever deployment this is — the RAG token-budget cutoff in
+   * retrieval.service.ts is built around this ceiling.
+   */
+  modelMaxContextTokens: positiveInt("MODEL_MAX_CONTEXT_TOKENS", 8192),
   /**
    * Direct vLLM URL — used ONLY for tokenizer.service.ts's /tokenize calls.
    * Every actual chat completion still goes through LITELLM_BASE_URL; this
@@ -71,4 +79,5 @@ export const env = {
   smtpPass: optional("SMTP_PASS", ""),
   smtpFrom: optional("SMTP_FROM", "").trim(),
   smtpSecure: optional("SMTP_SECURE", "").toLowerCase() === "true",
+  smtpTlsInsecure: optional("SMTP_TLS_INSECURE", "").toLowerCase() === "true",
 } as const;

@@ -61,10 +61,9 @@ export async function answerChatMessage(input: {
     messages.push({
       role: "system",
       content:
-        `Live web search results for this question:\n\n${formatWebContext(webCitations)}\n\n` +
-        "Use these for current, up-to-date information when relevant — cite " +
-        "sources you use with [n]. If they aren't relevant to the question, " +
-        "ignore them and answer normally.",
+        `Live web search results for this question (real pages, concise excerpts):\n\n${formatWebContext(webCitations)}\n\n` +
+        "Rules: use ONLY facts in excerpts; cite per sentence with [n] (e.g. '... [1]'). " +
+        "If excerpts don't contain the answer, say so. Ignore irrelevant results and answer normally.",
     });
   }
   messages.push(...trimmedHistory, { role: "user", content: input.question });

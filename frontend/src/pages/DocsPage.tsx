@@ -4,7 +4,7 @@ import { CodeBlock } from "../components/CodeBlock";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4001";
-const MODEL_NAME = "qwen2.5-7b";
+const MODEL_NAME = "qwen3-30b-a3b";
 
 const curlExample = `curl ${API_BASE_URL}/v1/chat/completions \\
   -H "Authorization: Bearer <your-api-key>" \\

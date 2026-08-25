@@ -33,11 +33,24 @@ export function smtpStatus(): string {
 function transporter() {
   const pass = env.smtpPass.replace(/\s+/g, "");
   const user = env.smtpUser.trim();
+  const insecure = env.smtpTlsInsecure && env.nodeEnv !== "production";
+  if (env.smtpTlsInsecure && env.nodeEnv === "production") {
+    console.warn(
+      "[mail] SMTP_TLS_INSECURE=true ignored in production — TLS verification stays enabled"
+    );
+  }
   return nodemailer.createTransport({
     host: resolvedHost(),
     port: env.smtpPort,
     secure: env.smtpSecure || env.smtpPort === 465,
     auth: user || pass ? { user, pass } : undefined,
+    // Avast Web/Mail Shield on Windows intercepts TLS with a self-signed CA
+    // (see searxng/avast-root-ca.crt). Node's bundled CA store doesn't trust
+    // it, so smtp.gmail.com fails locally with "self-signed certificate in
+    // certificate chain". Opt-in via SMTP_TLS_INSECURE=true ONLY for local
+    // dev behind Avast (NODE_ENV != production); in production verification
+    // is never disabled. Production fix is NODE_EXTRA_CA_CERTS, not this flag.
+    tls: insecure ? { rejectUnauthorized: false } : undefined,
   });
 }
 

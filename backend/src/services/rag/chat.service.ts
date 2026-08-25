@@ -47,14 +47,13 @@ const SYSTEM_PROMPT =
 // the ones that explicitly did.
 const WEB_SEARCH_ADDENDUM =
   " You also have live web search results below, each marked [n] (web) " +
-  "alongside the document context (if any). You may use these in addition " +
-  "to the document chunks — they are real, current information fetched " +
-  "just for this question, not your training data. When you use a web " +
-  "source, cite it the same way with [n]. Keep document-sourced facts and " +
-  "web-sourced facts distinct in your reasoning — don't blend a document's " +
-  "stated position with a web result as if they were the same source. If " +
-  "the documents alone fully answer the question, you don't need the web " +
-  "results at all.";
+  "alongside the document context (if any). They are real, current pages " +
+  "fetched just for this question, extracted to concise text. " +
+  "Rules: use ONLY facts explicitly in [n] excerpts for web-sourced claims; " +
+  "cite with [n] per factual sentence (e.g. '... [2]'). " +
+  "If excerpts don't contain the answer, say so — don't guess from training " +
+  "data. Keep document and web facts distinct — don't blend them as one " +
+  "source. If documents alone answer, ignore web results.";
 
 // Cached for the process lifetime, not hardcoded — if SYSTEM_PROMPT's wording
 // ever changes, the next process restart re-measures it automatically rather

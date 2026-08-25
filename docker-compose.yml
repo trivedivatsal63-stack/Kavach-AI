@@ -16,8 +16,9 @@
 
 services:
   vllm:
-    # v0.26.0 — broad CUDA arch support across modern consumer/laptop GPUs.
-    image: vllm/vllm-openai:v0.26.0
+    # vLLM nightly — required for Muse Glimmer (model + muse_glimmer parsers, PR 51655).
+    # For local Qwen, this is still compatible. Rollback: v0.26.0.
+    image: vllm/vllm-openai:nightly
     restart: unless-stopped
     ipc: host
     environment:
@@ -30,6 +31,13 @@ services:
     # env-var driven (VLLM_GPU_MEMORY_UTILIZATION, VLLM_MAX_MODEL_LEN,
     # VLLM_MAX_NUM_SEQS below), not hardcoded to a specific card, so a bigger
     # GPU just means raising these in .env, not editing this file.
+    # NOTE: Local defaults stay Qwen (8GB-safe). RunPod overrides via .env to
+    # cyankiwi/Muse-Glimmer-30B-AWQ-INT4 (see .env.runpod.example). Glimmer
+    # requires nightly + muse_glimmer parsers — added via runpod-start-vllm.sh
+    # for RunPod; local compose keeps minimal flags so Qwen still boots. If you
+    # manually set VLLM_MODEL to Glimmer locally, add --enable-auto-tool-choice
+    # --tool-call-parser muse_glimmer --reasoning-parser muse_glimmer --generation-config auto
+    # to the command abaixo.
     command:
       - --model=${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct-AWQ}
       - --served-model-name=${VLLM_SERVED_NAME:-qwen2.5-1.5b}

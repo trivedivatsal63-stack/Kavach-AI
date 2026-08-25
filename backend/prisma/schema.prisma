@@ -101,13 +101,16 @@ model RagChunk {
   page        Int?
   tokenCount  Int          @default(0) @map("token_count")
   content     String
-  // Generated column (GENERATED ALWAYS AS ... STORED) + GIN index added by
-  // raw SQL in models/rag/pool.ts's ensureSchema() for hybrid keyword
-  // search — declared here as Unsupported so `db push` knows it exists and
-  // never proposes dropping it, without Prisma trying to manage its
-  // generation expression itself (that stays owned by pool.ts).
-  contentTsv  Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, content)")) @map("content_tsv")
   document    RagDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  // content_tsv (GENERATED ALWAYS AS ... STORED) is NOT declared as a Prisma
+  // field here, deliberately. It previously was (as Unsupported, with no
+  // Prisma-managed default) to stop db push proposing to drop it -- but
+  // confirmed live that db push still tries to ALTER a column Postgres
+  // reports as generated, which Postgres flatly refuses. Leaving it fully
+  // undeclared means db push never touches it either way; pool.ts's
+  // ensureSchema() (unconditional drop+recreate, see models/rag/pool.ts)
+  // is the sole owner of its lifecycle, every boot, --accept-data-loss
+  // already covers the case where db push decides to drop it as drift.
 
   @@unique([documentId, chunkIndex])
   @@index([documentId])

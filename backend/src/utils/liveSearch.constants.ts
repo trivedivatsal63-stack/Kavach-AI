@@ -2,10 +2,9 @@
 // mirrors how rag.constants.ts centralizes RAG's tuning knobs.
 
 // How many SearXNG results to consider per query before token-budget
-// filtering decides how many actually make it into the prompt. Kept small —
-// each candidate beyond what fits the budget is fetched-and-discarded work
-// for nothing.
-export const LIVE_SEARCH_CANDIDATE_POOL = 6;
+// filtering / reranking decides how many actually make it into the prompt.
+// Bumped 6 -> 8 so reranking has choice without excessive fetch.
+export const LIVE_SEARCH_CANDIDATE_POOL = 8;
 
 export const PAGE_FETCH_TIMEOUT_MS = 6000;
 // Hard cap on bytes read off the response stream — stops reading (not just

@@ -39,7 +39,8 @@ CREATE INDEX IF NOT EXISTS idx_rag_chunks_document ON rag_chunks (document_id);
 -- auto-maintains itself on every insert/update, so ingestion needs no
 -- separate write. english config (stemming) is a first pass; a "simple"
 -- config may suit citation-heavy legal text better — future tuning knob.
-ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector
+ALTER TABLE rag_chunks DROP COLUMN IF EXISTS content_tsv;
+ALTER TABLE rag_chunks ADD COLUMN content_tsv tsvector
   GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_content_tsv ON rag_chunks USING GIN (content_tsv);
 
