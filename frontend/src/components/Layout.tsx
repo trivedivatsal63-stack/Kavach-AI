@@ -123,7 +123,7 @@ export function Layout({
             <p className="text-center text-xs text-gray-400 dark:text-gray-600">
               Self-hosted gateway — vLLM · LiteLLM · Qdrant. Serving{" "}
               <code className="font-mono text-gray-500 dark:text-gray-500">
-                qwen3-30b-a3b
+                muse-glimmer-30b-awq
               </code>
               .
             </p>

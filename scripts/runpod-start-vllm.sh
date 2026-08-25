@@ -14,6 +14,16 @@
 # Conservative concurrency: max_num_seqs 4 for 131K on 48GB A6000; nightly default would be 16.
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Always reload model flags from .env so a Muse/Qwen switch does not require
+# a full supervisord restart (children otherwise keep the old process env).
+if [[ -f "${REPO_ROOT}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/.env"
+  set +a
+fi
+
 # ninja (needed by flashinfer to JIT-compile sampling kernels at startup)
 # installs to the venv's bin/, which isn't on PATH when execing vllm
 # directly -- add it explicitly.

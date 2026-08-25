@@ -84,7 +84,20 @@ if [[ ! -x /workspace/venvs/vllm/bin/pip ]]; then
   python3 -m venv /workspace/venvs/vllm
 fi
 /workspace/venvs/vllm/bin/pip install --upgrade pip
+# Muse Glimmer needs nightly (muse_glimmer model + parsers, PR 51655).
+# Stable PyPI does not include them, and nightly version numbers can sort
+# *below* stable — so install deps from PyPI, then replace the package with
+# the pinned nightly wheel (no-deps).
+VLLM_NIGHTLY_COMMIT="${VLLM_NIGHTLY_COMMIT:-9c8e90eb2637a863ca14e47fd436b10ed7ba6536}"
+VLLM_NIGHTLY_WHL="${VLLM_NIGHTLY_WHL:-vllm-0.26.1rc1.dev1191+g9c8e90eb2-cp38-abi3-manylinux_2_28_x86_64.whl}"
+mkdir -p /workspace/tmp
+if [[ ! -f "/workspace/tmp/${VLLM_NIGHTLY_WHL}" ]]; then
+  curl -fsSL -o "/workspace/tmp/${VLLM_NIGHTLY_WHL}" \
+    "https://wheels.vllm.ai/${VLLM_NIGHTLY_COMMIT}/${VLLM_NIGHTLY_WHL//+/%2B}"
+fi
 /workspace/venvs/vllm/bin/pip install vllm
+/workspace/venvs/vllm/bin/pip uninstall -y vllm
+/workspace/venvs/vllm/bin/pip install --no-deps "/workspace/tmp/${VLLM_NIGHTLY_WHL}"
 
 echo "==> [4/10] LiteLLM venv"
 if [[ ! -x /workspace/venvs/litellm/bin/pip ]]; then

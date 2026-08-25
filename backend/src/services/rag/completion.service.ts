@@ -40,12 +40,24 @@ export async function completeChat(
     body: JSON.stringify({
       model: ragConfig.chatModel,
       messages,
+      // Muse Glimmer spends tokens on a reasoning channel before the user
+      // reply; a tight default budget truncates mid-reasoning and yields
+      // empty `content`. Leave headroom for both channels.
+      max_tokens: 2048,
     }),
   });
 
   const data = (await res.json().catch(() => ({}))) as {
     error?: { message?: string };
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        // Muse Glimmer (and other reasoning models) may put the chain-of-
+        // thought here and leave content empty until the user channel closes.
+        reasoning_content?: string | null;
+        reasoning?: string | null;
+      };
+    }>;
     usage?: {
       prompt_tokens?: number;
       completion_tokens?: number;
@@ -59,8 +71,15 @@ export async function completeChat(
     throw new CompletionError(res.status, message);
   }
 
+  const message = data.choices?.[0]?.message;
+  const content =
+    (message?.content && message.content.trim()) ||
+    (message?.reasoning_content && message.reasoning_content.trim()) ||
+    (message?.reasoning && message.reasoning.trim()) ||
+    "";
+
   return {
-    content: data.choices?.[0]?.message?.content ?? "",
+    content,
     promptTokens: data.usage?.prompt_tokens ?? 0,
     completionTokens: data.usage?.completion_tokens ?? 0,
     totalTokens: data.usage?.total_tokens ?? 0,

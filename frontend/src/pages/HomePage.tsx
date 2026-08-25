@@ -8,7 +8,7 @@ const CURL_EXAMPLE = `curl https://your-gateway/v1/chat/completions \\
   -H "Authorization: Bearer $KAVACH_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "qwen3-30b-a3b",
+    "model": "muse-glimmer-30b-awq",
     "messages": [{"role": "user", "content": "Summarize this clause..."}]
   }'`;
 
@@ -58,7 +58,7 @@ export function HomePage() {
           </h1>
           <p className="max-w-xl text-base text-gray-600 sm:text-lg dark:text-gray-400">
             Harrier runs a fully self-hosted stack — vLLM serving
-            qwen3-30b-a3b through LiteLLM — with API keys, budgets, usage
+            muse-glimmer-30b-awq through LiteLLM — with API keys, budgets, usage
             tracking and a private RAG store, all on infrastructure you
             control.
           </p>
