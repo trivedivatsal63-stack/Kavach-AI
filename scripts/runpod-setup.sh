@@ -139,11 +139,14 @@ fi
 if [[ ! -x /workspace/venvs/searxng/bin/pip ]]; then
   python3 -m venv /workspace/venvs/searxng
 fi
-/workspace/venvs/searxng/bin/pip install --upgrade pip
+/workspace/venvs/searxng/bin/pip install --upgrade pip setuptools wheel
 # requirements.txt first: -e/--no-build-isolation alone does not reliably
 # pull in searx's own runtime deps (confirmed live -- flask itself ended up
 # missing entirely, not just one stray package).
+# setuptools must be present in the venv: --no-build-isolation skips pip's
+# isolated build env, so build_meta has to resolve from site-packages.
 /workspace/venvs/searxng/bin/pip install -r /workspace/searxng-src/requirements.txt
+/workspace/venvs/searxng/bin/pip install --upgrade setuptools wheel
 /workspace/venvs/searxng/bin/pip install --use-pep517 --no-build-isolation -e /workspace/searxng-src
 # Optional uwsgi for production-style serving; supervisord uses searx.webapp
 # (simpler under process supervision). Install so both paths are available.

@@ -49,7 +49,8 @@ EMBEDDING_GPU_MIN_FREE_MB="${EMBEDDING_GPU_MIN_FREE_MB:-2048}"
 
 # Gemma 4 needs the 1.3.0rc line (stable 1.2.1 does not include it).
 # 1.3+ dropped trtllm-build — that is expected when TRT_BACKEND=pytorch.
-TRTLLM_VERSION="${TRTLLM_VERSION:-1.3.0rc17}"
+# PyPI skip: rc16/rc17 were never published; use rc24 (or rc15 minimum for Gemma 4).
+TRTLLM_VERSION="${TRTLLM_VERSION:-1.3.0rc24}"
 TRTLLM_VENV="${TRTLLM_VENV:-/workspace/venvs/trtllm}"
 TRTLLM_SRC="${TRTLLM_SRC:-/workspace/src/TensorRT-LLM}"
 HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
@@ -210,10 +211,16 @@ install_trtllm() {
 }
 if ! install_trtllm "${TRTLLM_VERSION}"; then
   if [[ "${TRT_BACKEND}" == "pytorch" ]]; then
-    warn "tensorrt_llm==${TRTLLM_VERSION} failed — trying 1.3.0rc16"
-    TRTLLM_VERSION="1.3.0rc16"
-    install_trtllm "${TRTLLM_VERSION}" \
-      || die "could not install a Gemma-4-capable tensorrt_llm (need 1.3.0rc*). Unpinned pip would land on 1.2.1 which has no Gemma 4."
+    for cand in 1.3.0rc24 1.3.0rc23 1.3.0rc22 1.3.0rc15; do
+      [[ "${cand}" == "${TRTLLM_VERSION}" ]] && continue
+      warn "tensorrt_llm==${TRTLLM_VERSION} failed — trying ${cand}"
+      TRTLLM_VERSION="${cand}"
+      if install_trtllm "${TRTLLM_VERSION}"; then
+        break
+      fi
+    done
+    command -v trtllm-serve >/dev/null 2>&1 \
+      || die "could not install a Gemma-4-capable tensorrt_llm (need 1.3.0rc15+). Unpinned pip can land on 1.2.1 which has no Gemma 4."
   else
     warn "tensorrt_llm==${TRTLLM_VERSION} failed — falling back to 0.21.0"
     TRTLLM_VERSION="0.21.0"
@@ -324,18 +331,21 @@ if [[ -d "${TRT_MODEL}" && -f "${TRT_MODEL}/config.json" ]]; then
   HF_DIR="${TRT_MODEL}"
   log "TRT_MODEL is a local checkpoint (${HF_DIR})"
 else
+  # Prefer `hf download` / snapshot_download. Do NOT use `huggingface-cli` —
+  # recent huggingface_hub turns it into a deprecation stub that exits without
+  # downloading (confirmed on 1.16+).
   TOKEN_ARGS=()
   [[ -n "${HUGGING_FACE_HUB_TOKEN}" ]] && TOKEN_ARGS+=(--token "${HUGGING_FACE_HUB_TOKEN}")
-  if command -v huggingface-cli >/dev/null 2>&1; then
-    huggingface-cli download "${TRT_MODEL}" --local-dir "${HF_DIR}" "${TOKEN_ARGS[@]}"
-  elif command -v hf >/dev/null 2>&1; then
+  if command -v hf >/dev/null 2>&1; then
     hf download "${TRT_MODEL}" --local-dir "${HF_DIR}" "${TOKEN_ARGS[@]}"
   else
+    log "hf CLI missing — using huggingface_hub.snapshot_download"
     "${TRTLLM_VENV}/bin/python" - "${TRT_MODEL}" "${HF_DIR}" "${HUGGING_FACE_HUB_TOKEN}" <<'PY'
-import os, sys
+import sys
 from huggingface_hub import snapshot_download
 model, dest, token = sys.argv[1], sys.argv[2], sys.argv[3] or None
-snapshot_download(model, local_dir=dest, token=token)
+snapshot_download(repo_id=model, local_dir=dest, token=token or None)
+print("downloaded", model, "→", dest)
 PY
   fi
 fi
