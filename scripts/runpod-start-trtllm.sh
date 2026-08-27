@@ -4,7 +4,8 @@
 # Replaces scripts/runpod-start-vllm.sh. LiteLLM (openai/ provider) and the
 # backend RAG tokenizer keep talking to 127.0.0.1:8000 — this wrapper:
 #   1. compiles the engine if the fingerprint is missing (runpod-build-trtllm.sh)
-#   2. starts trtllm-serve on 127.0.0.1:8001 against the compiled engine
+#   2. starts trtllm-serve on 127.0.0.1:8011 against the compiled engine
+#      (8001 is occupied by RunPod's host nginx — do not reuse it)
 #   3. fronts it with trtllm_openai_compat.py on 0.0.0.0:8000 so that
 #      POST /v1/chat/completions (LiteLLM) and POST /tokenize (backend) both work
 set -euo pipefail
@@ -53,7 +54,7 @@ fi
 PUBLIC_HOST="${TRT_BIND_HOST:-0.0.0.0}"
 PUBLIC_PORT="${TRT_PORT:-8000}"
 UPSTREAM_HOST="127.0.0.1"
-UPSTREAM_PORT="${TRT_UPSTREAM_PORT:-8001}"
+UPSTREAM_PORT="${TRT_UPSTREAM_PORT:-8011}"
 EXTRA_YAML="${ENGINE_DIR}/serve-extra.yaml"
 
 # ── compile / fetch on first boot ──────────────────────────────────────────
@@ -179,17 +180,25 @@ SERVE_PID=$!
 
 log "waiting for trtllm-serve health on :${UPSTREAM_PORT}"
 elapsed=0
-until curl -fsS --max-time 2 "http://${UPSTREAM_HOST}:${UPSTREAM_PORT}/health" >/dev/null 2>&1; do
+# Gemma 4 26B MoE AWQ first load on Ampere can exceed 15–20 min (weights + compile).
+HEALTH_TIMEOUT_S="${TRT_HEALTH_TIMEOUT_S:-2400}"
+health_ok() {
+  local base="http://${UPSTREAM_HOST}:${UPSTREAM_PORT}"
+  curl -fsS --max-time 2 "${base}/health" >/dev/null 2>&1 \
+    || curl -fsS --max-time 2 "${base}/v1/models" >/dev/null 2>&1 \
+    || curl -fsS --max-time 2 "${base}/health/ready" >/dev/null 2>&1
+}
+until health_ok; do
   if ! kill -0 "${SERVE_PID}" 2>/dev/null; then
     die "trtllm-serve exited before becoming healthy (pid ${SERVE_PID}). Check logs/trtllm.err.log"
   fi
   sleep 5
   elapsed=$((elapsed + 5))
-  if (( elapsed > 900 )); then
-    die "trtllm-serve did not become healthy within 900s"
+  if (( elapsed > HEALTH_TIMEOUT_S )); then
+    die "trtllm-serve did not become healthy within ${HEALTH_TIMEOUT_S}s"
   fi
-  if (( elapsed % 30 == 0 )); then
-    log "  still waiting (${elapsed}s)…"
+  if (( elapsed % 60 == 0 )); then
+    log "  still waiting (${elapsed}s / ${HEALTH_TIMEOUT_S}s)…"
   fi
 done
 log "trtllm-serve healthy after ${elapsed}s"

@@ -93,7 +93,25 @@ if [[ ! -x /workspace/venvs/litellm/bin/pip ]]; then
   python3 -m venv /workspace/venvs/litellm
 fi
 /workspace/venvs/litellm/bin/pip install --upgrade pip
-/workspace/venvs/litellm/bin/pip install 'litellm[proxy]'
+# prisma is required when DATABASE_URL / LITELLM_DATABASE_URL is set;
+# litellm[proxy] does not always pull it in as a hard dep.
+/workspace/venvs/litellm/bin/pip install 'litellm[proxy]' prisma
+SCHEMA="$(find /workspace/venvs/litellm -path '*/litellm/proxy/schema.prisma' | head -n1 || true)"
+if [[ -n "${SCHEMA}" ]]; then
+  # Generate client + create tables in the litellm DB (idempotent).
+  /workspace/venvs/litellm/bin/prisma generate --schema="${SCHEMA}" || true
+  if [[ -n "${LITELLM_DATABASE_URL:-}" ]]; then
+    DATABASE_URL="${LITELLM_DATABASE_URL}" \
+      /workspace/venvs/litellm/bin/prisma db push --schema="${SCHEMA}" --accept-data-loss || true
+  elif [[ -f "${REPO_ROOT}/.env" ]]; then
+    # shellcheck disable=SC1091
+    set -a; source "${REPO_ROOT}/.env"; set +a
+    if [[ -n "${LITELLM_DATABASE_URL:-}" ]]; then
+      DATABASE_URL="${LITELLM_DATABASE_URL}" \
+        /workspace/venvs/litellm/bin/prisma db push --schema="${SCHEMA}" --accept-data-loss || true
+    fi
+  fi
+fi
 
 echo "==> [5/10] Embedding venv"
 if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
@@ -101,14 +119,12 @@ if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
 fi
 /workspace/venvs/embedding/bin/pip install --upgrade pip
 /workspace/venvs/embedding/bin/pip install -r "${REPO_ROOT}/embedding/requirements.txt"
-# fastembed pulls in the CPU-only onnxruntime as a transitive dependency;
-# it does NOT get replaced by the onnxruntime-gpu install above (confirmed
-# live: both ended up co-installed, and whichever wins the shared
-# `onnxruntime` import namespace determined the available providers --
-# here it silently fell back to CPU-only, with no error, just a slow
-# 250%-CPU embedding service instead of using the GPU that was sitting
-# idle). Force onnxruntime-gpu to be the only one present.
-/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime 2>/dev/null || true
+# fastembed + onnxruntime-gpu can leave a broken import namespace
+# (AttributeError: SessionOptions). Prefer a single working ORT install.
+# With TensorRT-LLM holding most VRAM, CPU ORT is the reliable default;
+# EMBEDDING_PROVIDER=auto still tries GPU when enough free VRAM remains.
+/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null || true
+/workspace/venvs/embedding/bin/pip install --force-reinstall 'onnxruntime>=1.21,<1.27'
 
 echo "==> [6/10] Qdrant binary"
 QDRANT_BIN="/workspace/qdrant/qdrant"

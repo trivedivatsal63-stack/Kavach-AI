@@ -167,7 +167,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--upstream", default="http://127.0.0.1:8001")
+    p.add_argument("--upstream", default="http://127.0.0.1:8011")
     p.add_argument("--tokenizer", required=True, help="HF id or local tokenizer dir")
     p.add_argument("--served-model-name", default="qwen3-30b-a3b")
     p.add_argument("--max-model-len", type=int, default=8192)
