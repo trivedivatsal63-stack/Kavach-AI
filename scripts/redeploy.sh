@@ -30,7 +30,7 @@ if [[ -z "${PREV}" ]]; then
   # One path per line, matching git diff --name-only's format -- matches()
   # below anchors on line-start, so a single space-separated line here
   # would only ever match its first token.
-  CHANGED="$(printf '%s\n' backend/ frontend/ embedding/ litellm/ searxng/ scripts/supervisord.conf scripts/runpod-start-vllm.sh)"
+  CHANGED="$(printf '%s\n' backend/ frontend/ embedding/ litellm/ searxng/ scripts/supervisord.conf scripts/runpod-start-trtllm.sh scripts/runpod-build-trtllm.sh scripts/trtllm_openai_compat.py)"
 else
   echo "==> Changes since last redeploy (${PREV:0:8} -> ${CURR:0:8}):"
   CHANGED="$(git diff --name-only "${PREV}" "${CURR}")"
@@ -40,14 +40,16 @@ fi
 matches() { grep -q "^$1" <<<"${CHANGED}"; }
 
 do_backend=false; do_frontend=false; do_embedding=false
-do_litellm=false; do_searxng=false; do_vllm=false; do_supervisor_reload=false
+do_litellm=false; do_searxng=false; do_trtllm=false; do_supervisor_reload=false
 
 matches "backend/" && do_backend=true
 matches "frontend/" && do_frontend=true
 matches "embedding/" && do_embedding=true
 matches "litellm/" && do_litellm=true
 matches "searxng/" && do_searxng=true
-matches "scripts/runpod-start-vllm.sh" && do_vllm=true
+matches "scripts/runpod-start-trtllm.sh" && do_trtllm=true
+matches "scripts/runpod-build-trtllm.sh" && do_trtllm=true
+matches "scripts/trtllm_openai_compat.py" && do_trtllm=true
 matches "scripts/supervisord.conf" && do_supervisor_reload=true
 
 if ${do_backend}; then
@@ -86,7 +88,7 @@ ${do_frontend}  && { echo "==> Restarting frontend";  ${SCTL} restart frontend; 
 ${do_embedding} && { echo "==> Restarting embedding"; ${SCTL} restart embedding; }
 ${do_litellm}   && { echo "==> Restarting litellm";   ${SCTL} restart litellm; }
 ${do_searxng}   && { echo "==> Restarting searxng";   ${SCTL} restart searxng; }
-${do_vllm}      && { echo "==> Restarting vllm (model reload -- this one takes a couple minutes)"; ${SCTL} restart vllm; }
+${do_trtllm}    && { echo "==> Restarting trtllm (engine reload -- this one takes a couple minutes)"; ${SCTL} restart trtllm; }
 
 echo "${CURR}" > "${MARKER}"
 echo "==> Redeploy complete (marker updated to ${CURR:0:8})."

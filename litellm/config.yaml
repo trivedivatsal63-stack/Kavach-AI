@@ -1,42 +1,32 @@
 # LiteLLM proxy — keys/budgets/spend in host Postgres "litellm" DB.
-# When running via docker compose, VLLM_API_BASE=http://vllm:8000/v1
-# (compose network). Backend on the host still talks to LiteLLM at
-# http://localhost:4000.
+#
+# Inference backend is an OpenAI-compatible server on :8000.
+#   RunPod: TensorRT-LLM (trtllm-serve + /tokenize wrapper) at
+#           VLLM_API_BASE=http://127.0.0.1:8000/v1
+#   Local:  vLLM in Docker at VLLM_API_BASE=http://vllm:8000/v1
+#
+# The env var is still named VLLM_API_BASE so docker-compose and supervisord
+# interpolation stay a single mapping: LiteLLM openai/ provider → :8000/v1.
+# TensorRT-LLM does not need a different LiteLLM provider.
 
 model_list:
-  # Primary: Muse Glimmer 30B AWQ/INT4 (compressed-tensors, W4A16, group 32).
-  # Must match VLLM_SERVED_NAME / backend CHAT_MODEL.
-  - model_name: muse-glimmer-30b-awq
+  # Primary: Gemma 4 26B-A4B MoE (AWQ INT4) via TensorRT-LLM PyTorch backend.
+  # Must match TRT_SERVED_NAME / backend CHAT_MODEL / RAG_CHAT_MODEL.
+  - model_name: gemma-4-26b-a4b
     litellm_params:
-      model: openai/muse-glimmer-30b-awq
+      model: openai/gemma-4-26b-a4b
       api_base: os.environ/VLLM_API_BASE
       api_key: not-needed
       input_cost_per_token: 0.0001
       output_cost_per_token: 0.0002
-  # Alias so old UIs/tests that send the base name still resolve (same vLLM).
-  - model_name: muse-glimmer-30b
+  - model_name: gemma-4-26b
     litellm_params:
-      model: openai/muse-glimmer-30b-awq
+      model: openai/gemma-4-26b-a4b
       api_base: os.environ/VLLM_API_BASE
       api_key: not-needed
       input_cost_per_token: 0.0001
       output_cost_per_token: 0.0002
-  # Rollback aliases — Qwen (local dev + revert path). Commented for production migration.
-  # Uncomment the block below to revert VLLM_MODEL to Qwen without editing code.
-  # - model_name: qwen2.5-7b
-  #   litellm_params:
-  #     model: openai/qwen2.5-7b
-  #     api_base: os.environ/VLLM_API_BASE
-  #     api_key: not-needed
-  #     input_cost_per_token: 0.0001
-  #     output_cost_per_token: 0.0002
-  # - model_name: qwen2.5-1.5b
-  #   litellm_params:
-  #     model: openai/qwen2.5-7b
-  #     api_base: os.environ/VLLM_API_BASE
-  #     api_key: not-needed
-  #     input_cost_per_token: 0.0001
-  #     output_cost_per_token: 0.0002
+  # Qwen3-MoE rollback (TRT_BACKEND=tensorrt + VLLM-era served name).
   # - model_name: qwen3-30b-a3b
   #   litellm_params:
   #     model: openai/qwen3-30b-a3b
@@ -44,6 +34,29 @@ model_list:
   #     api_key: not-needed
   #     input_cost_per_token: 0.0001
   #     output_cost_per_token: 0.0002
+  # Muse Glimmer aliases — only valid on the vLLM rollback path.
+  # - model_name: muse-glimmer-30b-awq
+  #   litellm_params:
+  #     model: openai/muse-glimmer-30b-awq
+  #     api_base: os.environ/VLLM_API_BASE
+  #     api_key: not-needed
+  #     input_cost_per_token: 0.0001
+  #     output_cost_per_token: 0.0002
+  # Local hybrid (docker-compose) — laptop vLLM served names.
+  - model_name: qwen2.5-7b
+    litellm_params:
+      model: openai/qwen2.5-7b
+      api_base: os.environ/VLLM_API_BASE
+      api_key: not-needed
+      input_cost_per_token: 0.0001
+      output_cost_per_token: 0.0002
+  - model_name: qwen2.5-1.5b
+    litellm_params:
+      model: openai/qwen2.5-1.5b
+      api_base: os.environ/VLLM_API_BASE
+      api_key: not-needed
+      input_cost_per_token: 0.0001
+      output_cost_per_token: 0.0002
 
 litellm_settings:
   drop_params: true

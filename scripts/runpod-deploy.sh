@@ -66,6 +66,12 @@ if is_placeholder "${POSTGRES_PASSWORD:-}" \
   exit 1
 fi
 
+if [[ -z "${TRT_MODEL:-}" ]]; then
+  echo "ERROR: TRT_MODEL is not set in .env."
+  echo "This stack now serves TensorRT-LLM on :8000. Copy the TRT_* block from .env.runpod.example into .env (and set CHAT_MODEL / RAG_CHAT_MODEL / MODEL_MAX_CONTEXT_TOKENS to match TRT_SERVED_NAME / TRT_MAX_MODEL_LEN)."
+  exit 1
+fi
+
 if [[ -z "${RUNPOD_POD_ID:-}" ]]; then
   echo "ERROR: RUNPOD_POD_ID not found — this script must run on an actual RunPod pod, not locally."
   exit 1
@@ -97,7 +103,11 @@ LITELLM_DATABASE_URL="postgresql://${POSTGRES_USER}:${PG_PASS_ENC}@127.0.0.1:543
 upsert_env "DATABASE_URL" "${DATABASE_URL}" "${ENV_FILE}"
 upsert_env "LITELLM_DATABASE_URL" "${LITELLM_DATABASE_URL}" "${ENV_FILE}"
 upsert_env "LITELLM_BASE_URL" "http://127.0.0.1:4000" "${ENV_FILE}"
+# Backend RAG tokenizer still reads VLLM_BASE_URL and POSTs /tokenize — the
+# TRT-LLM compat wrapper on :8000 implements that contract.
 upsert_env "VLLM_BASE_URL" "http://127.0.0.1:8000" "${ENV_FILE}"
+upsert_env "VLLM_API_BASE" "http://127.0.0.1:8000/v1" "${ENV_FILE}"
+upsert_env "TRTLLM_API_BASE" "http://127.0.0.1:8000/v1" "${ENV_FILE}"
 upsert_env "QDRANT_URL" "http://127.0.0.1:6333" "${ENV_FILE}"
 upsert_env "EMBEDDING_BASE_URL" "http://127.0.0.1:8002" "${ENV_FILE}"
 upsert_env "SEARXNG_URL" "http://127.0.0.1:8889" "${ENV_FILE}"
@@ -109,8 +119,10 @@ source "${ENV_FILE}"
 set +a
 export CORS_ORIGIN VITE_API_BASE_URL VITE_LITELLM_BASE_URL
 export DATABASE_URL LITELLM_DATABASE_URL LITELLM_BASE_URL VLLM_BASE_URL
+export VLLM_API_BASE TRTLLM_API_BASE
 export FRONTEND_URL BACKEND_URL LITELLM_URL
 export HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
+export HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-}"
 
 # Sync Postgres role password to match .env (setup may have run before secrets existed)
 if [[ -x /workspace/bin/pg_bin/psql ]]; then
@@ -173,16 +185,34 @@ if [[ -S "${SOCK}" ]] && supervisorctl -c "${SUPERVISORD_CONF}" status >/dev/nul
   rm -f "${SOCK}" "${LOG_DIR}/supervisord.pid" 2>/dev/null || true
 fi
 
+echo "==> Compiling TensorRT-LLM engine (no-op when fingerprint matches)"
+chmod +x "${REPO_ROOT}/scripts/runpod-build-trtllm.sh" \
+         "${REPO_ROOT}/scripts/runpod-start-trtllm.sh"
+"${REPO_ROOT}/scripts/runpod-build-trtllm.sh"
+
+# onnxruntime-gpu needs the NVIDIA CUDA pip libs that ship next to tensorrt_llm.
+# Probe after the build so the venv actually exists (cu12 vs cu13, py3.10 vs 3.12).
+EMBEDDING_LD_LIBRARY_PATH="$(
+  find /workspace/venvs/trtllm/lib -type d -path '*/nvidia/cu*/lib' 2>/dev/null | head -n1
+)"
+if [[ -z "${EMBEDDING_LD_LIBRARY_PATH}" ]]; then
+  EMBEDDING_LD_LIBRARY_PATH="/usr/local/cuda/lib64"
+fi
+if [[ -d /usr/local/cuda/lib64 ]]; then
+  EMBEDDING_LD_LIBRARY_PATH="${EMBEDDING_LD_LIBRARY_PATH}:/usr/local/cuda/lib64"
+fi
+export EMBEDDING_LD_LIBRARY_PATH
+upsert_env "EMBEDDING_LD_LIBRARY_PATH" "${EMBEDDING_LD_LIBRARY_PATH}" "${ENV_FILE}"
+
 echo "==> Starting supervisord"
 supervisord -c "${SUPERVISORD_CONF}"
 sleep 3
 
-echo "==> Health checks (first boot may download ~19GB of model weights)"
-# Postgres is up when backend can connect; poll public services + vLLM.
+echo "==> Health checks (engine load on first serve can take several minutes)"
 FAILED=0
 wait_http "qdrant" "http://127.0.0.1:6333/readyz" 120 || FAILED=1
 wait_http "embedding" "http://127.0.0.1:8002/health" 180 || FAILED=1
-wait_http "vllm" "http://127.0.0.1:8000/health" 1800 || FAILED=1
+wait_http "trtllm" "http://127.0.0.1:8000/health" 1800 || FAILED=1
 wait_http "litellm" "http://127.0.0.1:4000/health/readiness" 300 || FAILED=1
 wait_http "backend" "http://127.0.0.1:4001/health" 180 || FAILED=1
 wait_http "frontend" "http://127.0.0.1:5173" 120 || FAILED=1
