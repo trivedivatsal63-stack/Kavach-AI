@@ -345,19 +345,32 @@ import sys
 from huggingface_hub import snapshot_download
 model, dest, token = sys.argv[1], sys.argv[2], sys.argv[3] or None
 snapshot_download(repo_id=model, local_dir=dest, token=token or None)
-print("downloaded", model, "→", dest)
+print("downloaded", model, "->", dest)
 PY
 fi
-[[ -f "${HF_DIR}/config.json" ]] || die "no config.json under ${HF_DIR} — download failed"
+[[ -f "${HF_DIR}/config.json" ]] || die "no config.json under ${HF_DIR} - download failed"
 
-MODEL_TYPE="$(python -c "import json; print(json.load(open('${HF_DIR}/config.json')).get('model_type','').lower())")"
-ARCH="$(python -c "import json; a=json.load(open('${HF_DIR}/config.json')).get('architectures') or ['']; print(a[0])")"
-QUANT_METHOD="$(python -c "
-import json
-c=json.load(open('${HF_DIR}/config.json'))
-q=(c.get('quantization_config') or {})
-print((q.get('quant_method') or q.get('quant_method'.upper()) or '').lower())
-")"
+MODEL_TYPE="$(
+  python - "${HF_DIR}" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1] + "/config.json")).get("model_type", "").lower())
+PY
+)"
+ARCH="$(
+  python - "${HF_DIR}" <<'PY'
+import json, sys
+a = json.load(open(sys.argv[1] + "/config.json")).get("architectures") or [""]
+print(a[0])
+PY
+)"
+QUANT_METHOD="$(
+  python - "${HF_DIR}" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1] + "/config.json"))
+q = c.get("quantization_config") or {}
+print((q.get("quant_method") or "").lower())
+PY
+)"
 log "HF model_type=${MODEL_TYPE} arch=${ARCH} quant_method=${QUANT_METHOD:-none}"
 
 is_gemma4=0
