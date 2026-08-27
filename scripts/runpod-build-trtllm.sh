@@ -330,24 +330,21 @@ log "fetching weights: ${TRT_MODEL} → ${HF_DIR}"
 if [[ -d "${TRT_MODEL}" && -f "${TRT_MODEL}/config.json" ]]; then
   HF_DIR="${TRT_MODEL}"
   log "TRT_MODEL is a local checkpoint (${HF_DIR})"
+elif [[ -f "${HF_DIR}/config.json" ]]; then
+  log "weights already present at ${HF_DIR} — skipping download"
 else
-  # Prefer `hf download` / snapshot_download. Do NOT use `huggingface-cli` —
-  # recent huggingface_hub turns it into a deprecation stub that exits without
-  # downloading (confirmed on 1.16+).
-  TOKEN_ARGS=()
-  [[ -n "${HUGGING_FACE_HUB_TOKEN}" ]] && TOKEN_ARGS+=(--token "${HUGGING_FACE_HUB_TOKEN}")
-  if command -v hf >/dev/null 2>&1; then
-    hf download "${TRT_MODEL}" --local-dir "${HF_DIR}" "${TOKEN_ARGS[@]}"
-  else
-    log "hf CLI missing — using huggingface_hub.snapshot_download"
-    "${TRTLLM_VENV}/bin/python" - "${TRT_MODEL}" "${HF_DIR}" "${HUGGING_FACE_HUB_TOKEN}" <<'PY'
+  # Use snapshot_download (not `hf` / `huggingface-cli`):
+  # - huggingface-cli is a dead stub on hub 1.16+
+  # - `hf download` can finish the files then raise click.Exit(0) with a
+  #   traceback; under set -e that aborts the build even though weights are OK
+  log "downloading via huggingface_hub.snapshot_download"
+  "${TRTLLM_VENV}/bin/python" - "${TRT_MODEL}" "${HF_DIR}" "${HUGGING_FACE_HUB_TOKEN:-}" <<'PY'
 import sys
 from huggingface_hub import snapshot_download
 model, dest, token = sys.argv[1], sys.argv[2], sys.argv[3] or None
 snapshot_download(repo_id=model, local_dir=dest, token=token or None)
 print("downloaded", model, "→", dest)
 PY
-  fi
 fi
 [[ -f "${HF_DIR}/config.json" ]] || die "no config.json under ${HF_DIR} — download failed"
 
