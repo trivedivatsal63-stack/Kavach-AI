@@ -191,7 +191,9 @@ if [[ ! -x "${TRTLLM_VENV}/bin/pip" ]]; then
 fi
 # shellcheck disable=SC1091
 source "${TRTLLM_VENV}/bin/activate"
-python -m pip install --upgrade pip setuptools wheel >/dev/null
+# Pin setuptools<80: tensorrt_llm/torch require it. Bare `setuptools` upgrades
+# to 84+ every run and forces a slow pip resolve on every deploy.
+python -m pip install --upgrade pip 'setuptools>=70,<80' wheel >/dev/null
 
 log "installing tensorrt_llm==${TRTLLM_VERSION} + build deps"
 install_trtllm() {
@@ -331,7 +333,7 @@ if [[ -d "${TRT_MODEL}" && -f "${TRT_MODEL}/config.json" ]]; then
   HF_DIR="${TRT_MODEL}"
   log "TRT_MODEL is a local checkpoint (${HF_DIR})"
 elif [[ -f "${HF_DIR}/config.json" ]]; then
-  log "weights already present at ${HF_DIR} — skipping download"
+  log "weights already present at ${HF_DIR} - skipping download"
 else
   # Use snapshot_download (not `hf` / `huggingface-cli`):
   # - huggingface-cli is a dead stub on hub 1.16+
