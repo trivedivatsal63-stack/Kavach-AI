@@ -17,6 +17,9 @@ import { Layout } from "../components/Layout";
 import { Badge } from "../components/Badge";
 import { Spinner } from "../components/Spinner";
 import { KeyTestResult } from "../components/KeyTestResult";
+import { CodeBlock } from "../components/CodeBlock";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4001";
 
 export function DashboardPage() {
   const { token, user, updateUser } = useAuth();
@@ -30,6 +33,11 @@ export function DashboardPage() {
   const [testResult, setTestResult] = useState<TestKeyResponse | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testPending, setTestPending] = useState(false);
+  const [showGenModal, setShowGenModal] = useState(false);
+  const [genName, setGenName] = useState("");
+  const [genScope, setGenScope] = useState<"general" | "compliance">("general");
+  const [genExpiresIn, setGenExpiresIn] = useState("30d");
+  const [lastGenScope, setLastGenScope] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -54,8 +62,11 @@ export function DashboardPage() {
     setTestResult(null);
     setTestError(null);
     try {
-      const result = await generateKey(token);
+      const result = await generateKey(token, { scope: genScope, name: genName.trim() || undefined, expiresIn: genExpiresIn });
       setRevealedKey(result.key);
+      setLastGenScope(result.scope ?? genScope);
+      setShowGenModal(false);
+      setGenName("");
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to generate key.");
@@ -213,19 +224,56 @@ export function DashboardPage() {
                 Test an API key
               </Link>
               <button
-                onClick={handleGenerate}
+                onClick={() => setShowGenModal(true)}
                 disabled={busy}
                 className="btn-primary"
               >
-                {busy ? "Working…" : "Generate new key"}
+                Generate new key
               </button>
             </div>
           </div>
 
+          {showGenModal && (
+            <div className="border-b border-gray-200 bg-gray-50 p-5 dark:border-neutral-800 dark:bg-neutral-900/50">
+              <h3 className="text-sm font-semibold">Generate new API key</h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-medium">Key name
+                  <input value={genName} onChange={(e) => setGenName(e.target.value)} placeholder="e.g. WDM compliance prod" className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-black" maxLength={80} />
+                </label>
+                <label className="text-xs font-medium">Expiration
+                  <select value={genExpiresIn} onChange={(e) => setGenExpiresIn(e.target.value)} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm dark:bg-black">
+                    <option value="7d">7 days</option>
+                    <option value="30d">30 days</option>
+                    <option value="90d">90 days</option>
+                    <option value="365d">1 year</option>
+                    <option value="never">Never</option>
+                  </select>
+                </label>
+              </div>
+              <div className="mt-3">
+                <p className="text-xs font-medium">Key type</p>
+                <div className="mt-1 flex gap-2">
+                  <label className={`flex-1 cursor-pointer rounded-xl border p-3 text-sm ${genScope === "general" ? "border-indigo-600 bg-indigo-50 dark:bg-indigo-950/30" : "bg-white dark:bg-black"}`}>
+                    <input type="radio" className="mr-2" checked={genScope === "general"} onChange={() => setGenScope("general")} /> Normal
+                    <span className="block text-xs text-gray-500">For chat, RAG, completions</span>
+                  </label>
+                  <label className={`flex-1 cursor-pointer rounded-xl border p-3 text-sm ${genScope === "compliance" ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/30" : "bg-white dark:bg-black"}`}>
+                    <input type="radio" className="mr-2" checked={genScope === "compliance"} onChange={() => setGenScope("compliance")} /> Compliance check
+                    <span className="block text-xs text-gray-500">For POST /v1/compliance/query</span>
+                  </label>
+                </div>
+              </div>
+              <div className="mt-4 flex gap-2">
+                <button onClick={handleGenerate} disabled={busy} className="btn-primary">{busy ? "Generating…" : "Generate"}</button>
+                <button onClick={() => setShowGenModal(false)} className="btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
+
           {revealedKey && (
             <div className="border-b border-amber-200/60 bg-amber-50/60 p-5 dark:border-amber-900/40 dark:bg-amber-950/20">
               <p className="text-sm font-medium">
-                Copy this key now — you won&apos;t be able to see it again.
+                Copy this key now — you won&apos;t be able to see it again. {lastGenScope === "compliance" && <span className="text-emerald-700">(Compliance key)</span>}
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <code
@@ -245,6 +293,16 @@ export function DashboardPage() {
                   {testPending ? "Testing…" : "Test this key"}
                 </button>
               </div>
+              {lastGenScope === "compliance" && (
+                <div className="mt-3 space-y-3 rounded-lg border bg-white p-3 dark:bg-black">
+                  <p className="text-sm font-semibold">Compliance flow — OpenAI compatible ✓</p>
+                  <p className="text-xs text-gray-600">Dedicated endpoint:</p>
+                  <CodeBlock code={`curl ${API_BASE_URL}/v1/compliance/query \\\n  -H "Authorization: Bearer YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"sources":["SEBI","RBI"],"lookbackDays":7}'`} />
+                  <p className="text-xs text-gray-600">OpenAI-compatible (same key, no code change):</p>
+                  <CodeBlock code={`from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${API_BASE_URL}/v1",\n    api_key="YOUR_KEY",\n)\n\nresp = client.chat.completions.create(\n    model="harrier-compliance",\n    messages=[{"role":"user","content":"check compliance"}],\n)\n\nprint(resp.choices[0].message.content)`} />
+                  <p className="text-xs text-gray-500">Both return the same table; OpenAI path returns <code className="rounded bg-gray-100 px-1 dark:bg-neutral-800">choices[0].message.content</code> as JSON + <code className="rounded bg-gray-100 px-1 dark:bg-neutral-800">compliance.table</code>. Works with any OpenAI SDK.</p>
+                </div>
+              )}
               {(testResult || testError) && (
                 <div className="mt-3">
                   <KeyTestResult result={testResult} error={testError} />
@@ -259,24 +317,29 @@ export function DashboardPage() {
                 No API keys yet. Generate your first one above.
               </li>
             )}
-            {keys.map((k) => (
+            {keys.map((k) => {
+              const isExpired = (k as any).expiresAt && new Date((k as any).expiresAt) < new Date();
+              return (
               <li
                 key={k.id}
                 className="flex items-center justify-between gap-4 p-4 text-sm"
               >
                 <div className="min-w-0">
+                  <p className="truncate font-medium text-sm">
+                    {(k as any).name || <span className="text-gray-400 italic">Unnamed key</span>} { (k as any).scope === "compliance" && <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Compliance</span> } {(k as any).scope !== "compliance" && (k as any).scope !== "general" && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs">{(k as any).scope}</span> }
+                  </p>
                   <p className="truncate font-mono text-xs text-gray-500 dark:text-gray-400">
                     {k.id}
                   </p>
-                  <p className="mt-1">
-                    Created {new Date(k.createdAt).toLocaleString()}
+                  <p className="mt-1 text-xs">
+                    Created {new Date(k.createdAt).toLocaleString()} {(k as any).expiresAt ? <span>· Expires {new Date((k as any).expiresAt).toLocaleDateString()} {isExpired && <span className="text-red-600 font-medium">(Expired)</span>}</span> : <span>· Never expires</span>}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
-                  <Badge variant={k.revokedAt ? "danger" : "success"}>
-                    {k.revokedAt ? "Revoked" : "Active"}
+                  <Badge variant={k.revokedAt || isExpired ? "danger" : "success"}>
+                    {k.revokedAt ? "Revoked" : isExpired ? "Expired" : "Active"}
                   </Badge>
-                  {!k.revokedAt && (
+                  {!k.revokedAt && !isExpired && (
                     <button
                       onClick={() => void handleRevoke(k.id)}
                       disabled={busy}
@@ -287,7 +350,7 @@ export function DashboardPage() {
                   )}
                 </div>
               </li>
-            ))}
+            )})}
           </ul>
         </div>
 

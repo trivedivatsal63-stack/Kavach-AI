@@ -42,13 +42,16 @@ export interface GeneratedLiteLLMKey {
 
 export async function generateLiteLLMKey(
   dashboardUserId: string,
-  maxBudget: number
+  maxBudget: number,
+  opts?: { duration?: string; keyAlias?: string }
 ): Promise<GeneratedLiteLLMKey> {
   const res = await litellmFetch(`/key/generate`, {
     method: "POST",
     headers: authHeaders(masterKey()),
     body: JSON.stringify({
       max_budget: maxBudget,
+      duration: opts?.duration,
+      key_alias: opts?.keyAlias,
       metadata: { dashboard_user_id: dashboardUserId },
     }),
   });

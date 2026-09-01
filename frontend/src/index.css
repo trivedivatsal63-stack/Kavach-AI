@@ -7,7 +7,7 @@
 
 @theme {
   --font-sans: "Ubuntu", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Ubuntu", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -82,5 +82,48 @@
     background-size: 22px 22px;
     -webkit-mask-image: radial-gradient(ellipse 65% 60% at 50% 35%, #000 40%, transparent 85%);
     mask-image: radial-gradient(ellipse 65% 60% at 50% 35%, #000 40%, transparent 85%);
+  }
+
+  /* Lightweight markdown body for assistant replies */
+  .md-body {
+    @apply space-y-3 text-[15px] leading-relaxed text-gray-800 dark:text-gray-100;
+  }
+  .md-body h1,
+  .md-body h2,
+  .md-body h3 {
+    @apply font-semibold tracking-tight text-gray-900 dark:text-white;
+  }
+  .md-body h1 {
+    @apply text-xl;
+  }
+  .md-body h2 {
+    @apply text-lg;
+  }
+  .md-body h3 {
+    @apply text-base;
+  }
+  .md-body p {
+    @apply whitespace-pre-wrap;
+  }
+  .md-body ul {
+    @apply list-disc space-y-1 pl-5;
+  }
+  .md-body ol {
+    @apply list-decimal space-y-1 pl-5;
+  }
+  .md-body code {
+    @apply rounded bg-gray-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-neutral-800;
+  }
+  .md-body pre {
+    @apply overflow-x-auto rounded-xl bg-gray-950 p-3 font-mono text-xs text-gray-100 dark:bg-black/60;
+  }
+  .md-body pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+  .md-body a {
+    @apply font-medium text-gray-900 underline underline-offset-2 dark:text-white;
+  }
+  .md-body blockquote {
+    @apply border-l-2 border-gray-300 pl-3 text-gray-600 italic dark:border-neutral-600 dark:text-gray-300;
   }
 }

@@ -17,7 +17,7 @@ export function AdminRoute() {
   }
 
   if (user?.role !== "superadmin") {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/chat" replace />;
   }
 
   return <Outlet />;

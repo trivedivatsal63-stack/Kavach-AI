@@ -25,14 +25,37 @@ export async function test(req: Request, res: Response, next: NextFunction) {
 
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await keysService.createKey(req.userId!);
+    const scope = typeof req.body?.scope === "string" ? req.body.scope : "general";
+    const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : undefined;
+    const expiresIn = typeof req.body?.expiresIn === "string" ? req.body.expiresIn : typeof req.body?.expiresAt === "string" ? req.body.expiresAt : null;
+    // expiresIn: "7d" | "30d" | "90d" | "365d" | "never" or ISO date
+    let expiresAt: Date | null = null;
+    let duration: string | undefined;
+    if (expiresIn && expiresIn !== "never") {
+      const map: Record<string, string> = { "7d": "7d", "30d": "30d", "90d": "90d", "365d": "365d", "1y": "365d" };
+      if (map[expiresIn]) {
+        duration = map[expiresIn];
+        const days = expiresIn === "7d" ? 7 : expiresIn === "30d" ? 30 : expiresIn === "90d" ? 90 : 365;
+        expiresAt = new Date(Date.now() + days * 24 * 3600 * 1000);
+      } else {
+        const d = new Date(expiresIn);
+        if (!isNaN(d.getTime()) && d > new Date()) { expiresAt = d; duration = undefined; }
+      }
+    }
+    const result = await keysService.createKey(req.userId!, { scope, name, expiresAt, duration });
     res.status(201).json(result);
   } catch (err) {
     console.error("POST /keys failed:", err);
+    if (err instanceof AppError) {
+      next(err);
+      return;
+    }
+    const detail = err instanceof Error ? err.message : undefined;
     next(
-      err instanceof AppError
-        ? err
-        : new AppError(500, "Failed to generate key.")
+      new AppError(
+        500,
+        detail ? `Failed to generate key: ${detail}` : "Failed to generate key."
+      )
     );
   }
 }

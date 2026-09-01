@@ -39,9 +39,22 @@ CREATE INDEX IF NOT EXISTS idx_rag_chunks_document ON rag_chunks (document_id);
 -- auto-maintains itself on every insert/update, so ingestion needs no
 -- separate write. english config (stemming) is a first pass; a "simple"
 -- config may suit citation-heavy legal text better — future tuning knob.
-ALTER TABLE rag_chunks DROP COLUMN IF EXISTS content_tsv;
-ALTER TABLE rag_chunks ADD COLUMN content_tsv tsvector
-  GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+--
+-- IMPORTANT: only add the column if missing. Never DROP+ADD on every boot —
+-- Postgres keeps dropped columns as ghosts in pg_attribute and will eventually
+-- fail with "tables can have at most 1600 columns".
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'rag_chunks'
+      AND column_name = 'content_tsv'
+  ) THEN
+    ALTER TABLE rag_chunks ADD COLUMN content_tsv tsvector
+      GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_rag_chunks_content_tsv ON rag_chunks USING GIN (content_tsv);
 
 -- User-facing RAG API keys. Follows the ApiKey discipline: the raw key is

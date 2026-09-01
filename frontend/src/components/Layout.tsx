@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { MODEL_LABEL, MODEL_NAME } from "../lib/modelInfo";
 import { ShieldMark } from "./ShieldMark";
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -121,11 +122,11 @@ export function Layout({
               <ShieldMark className="h-7 w-auto" />
             </div>
             <p className="text-center text-xs text-gray-400 dark:text-gray-600">
-              Self-hosted gateway — vLLM · LiteLLM · Qdrant. Serving{" "}
+              Self-hosted gateway — TensorRT-LLM · LiteLLM · Qdrant. Serving{" "}
               <code className="font-mono text-gray-500 dark:text-gray-500">
-                muse-glimmer-30b-awq
-              </code>
-              .
+                {MODEL_NAME}
+              </code>{" "}
+              ({MODEL_LABEL}).
             </p>
           </div>
         </footer>

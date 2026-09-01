@@ -24,7 +24,7 @@ export function ForgotPasswordPage() {
   const [pending, setPending] = useState(false);
 
   if (ready && token) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/chat" replace />;
   }
 
   async function handleEmail(e: FormEvent) {

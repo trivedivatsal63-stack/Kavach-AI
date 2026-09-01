@@ -1,11 +1,8 @@
-// Must match backend/src/utils/chat.constants.ts's MAX_MESSAGE_CHARS — no
-// shared package between frontend/backend, so this is a synced duplicate,
-// not a guess.
+import { MODEL_LABEL, MODEL_NAME } from "../../lib/modelInfo";
+
 const MAX_MESSAGE_CHARS = 4000;
 
-// Real current model — backend/src/utils/rag.constants.ts's RAG_CHAT_MODEL.
-const MODEL_NAME = "muse-glimmer-30b-awq";
-
+/** Large rounded composer matching the centered hero / thread footer. */
 export function Composer({
   value,
   onChange,
@@ -15,56 +12,63 @@ export function Composer({
   webSearch,
   onToggleWebSearch,
   onAttach,
+  compact = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   disabled: boolean;
   placeholder: string;
-  /** Omit both props to hide the toggle entirely (not every caller wants it). */
   webSearch?: boolean;
   onToggleWebSearch?: () => void;
-  /** RAG mode only — attaching/scoping documents to the conversation. */
   onAttach?: () => void;
+  /** Slightly tighter padding when embedded in the welcome hero */
+  compact?: boolean;
 }) {
   return (
-    <div className="shrink-0 border-t border-gray-100 p-4 dark:border-neutral-800">
+    <div className={compact ? "" : "shrink-0 px-4 pb-5 pt-2 sm:px-6"}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           onSubmit();
         }}
-        className="rounded-2xl border border-gray-200 bg-white shadow-sm transition-colors focus-within:border-gray-400 dark:border-neutral-800 dark:bg-neutral-900 dark:focus-within:border-neutral-600"
+        className="mx-auto w-full max-w-3xl rounded-[28px] border border-gray-200 bg-white shadow-[0_8px_30px_rgba(0,0,0,0.06)] focus-within:border-gray-300 dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-none"
       >
-        <div className="flex items-center gap-2 px-4 pt-3">
-          <input
+        <div className={`flex items-end gap-2 px-4 ${compact ? "pt-3" : "pt-4"}`}>
+          <textarea
             value={value}
             onChange={(e) => onChange(e.target.value.slice(0, MAX_MESSAGE_CHARS))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                onSubmit();
+              }
+            }}
+            rows={1}
             placeholder={placeholder}
-            className="flex-1 border-none bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none dark:text-gray-100 dark:placeholder:text-gray-500"
+            className="max-h-40 min-h-[44px] flex-1 resize-none border-none bg-transparent py-2.5 text-[15px] text-gray-900 placeholder:text-gray-400 focus:outline-none dark:text-gray-100 dark:placeholder:text-gray-500"
           />
           <button
             type="submit"
             disabled={disabled || !value.trim()}
             aria-label="Send"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-900 text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-gray-900 dark:hover:bg-gray-200"
+            className="mb-1.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-500 transition-colors enabled:bg-gray-900 enabled:text-white enabled:hover:bg-gray-700 disabled:cursor-not-allowed dark:bg-neutral-800 dark:enabled:bg-white dark:enabled:text-gray-900"
           >
             <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-              <path d="M2.94 17.06a.75.75 0 0 0 .82.16l13.5-6a.75.75 0 0 0 0-1.37l-13.5-6a.75.75 0 0 0-1.02.93L5.5 10 2.74 16.22a.75.75 0 0 0 .2.84Z" />
+              <path d="M10 3.5a.75.75 0 0 1 .75.75v9.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.25A.75.75 0 0 1 10 3.5Z" />
             </svg>
           </button>
         </div>
 
-        <div className="flex items-center justify-between gap-2 px-3 pt-1.5 pb-2.5">
+        <div className="flex items-center justify-between gap-2 px-3 pb-3">
           <div className="flex items-center gap-1">
             {onAttach && (
               <button
                 type="button"
                 onClick={onAttach}
-                title="Attach documents"
-                className="rounded-lg px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-neutral-800"
+                className="rounded-full px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-800"
               >
-                📎 Attach
+                + Attach
               </button>
             )}
             {onToggleWebSearch && (
@@ -72,29 +76,29 @@ export function Composer({
                 type="button"
                 onClick={onToggleWebSearch}
                 aria-pressed={webSearch}
-                title={
+                className={`rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
                   webSearch
-                    ? "Web search is on — this message will be grounded with live results"
-                    : "Turn on web search for this message"
-                }
-                className={`rounded-lg px-2 py-1 text-xs font-medium transition-colors ${
-                  webSearch
-                    ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-400"
-                    : "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-neutral-800"
+                    ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                    : "text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-800"
                 }`}
               >
-                🌐 Web search
+                Web
               </button>
             )}
+            <span className="hidden px-2 text-[10px] text-gray-400 sm:inline dark:text-gray-600">
+              {MODEL_NAME}
+            </span>
           </div>
-          <span className="text-xs text-gray-300 dark:text-gray-600">
-            {value.length} / {MAX_MESSAGE_CHARS}
+          <span className="text-[10px] text-gray-300 dark:text-gray-600">
+            {value.length}/{MAX_MESSAGE_CHARS} · {MODEL_LABEL.split(" · ")[0]}
           </span>
         </div>
       </form>
-      <p className="mt-2 text-center text-xs text-gray-400 dark:text-gray-600">
-        Harrier may generate inaccurate information. Model: {MODEL_NAME}
-      </p>
+      {!compact && (
+        <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] text-gray-400 dark:text-gray-600">
+          Harrier may generate inaccurate information. Model: {MODEL_NAME} ({MODEL_LABEL})
+        </p>
+      )}
     </div>
   );
 }

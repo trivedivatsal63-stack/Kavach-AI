@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AppShell } from "../components/appshell/AppShell";
 import { AppSidebar } from "../components/appshell/AppSidebar";
-import { AppRightPanel } from "../components/appshell/AppRightPanel";
 import { WelcomeScreen } from "../components/appshell/WelcomeScreen";
 import { Badge } from "../components/Badge";
 import { Spinner } from "../components/Spinner";
@@ -67,7 +66,6 @@ export function RagPage() {
   const [pendingScopeDocId, setPendingScopeDocId] = useState("");
   const [draft, setDraft] = useState("");
   const [webSearch, setWebSearch] = useState(false);
-  const [search, setSearch] = useState("");
 
   // Entry points from AppSidebar's "Documents" nav item and ChatPage's
   // welcome screen link here with ?view=documents / ?view=keys — both land
@@ -86,7 +84,6 @@ export function RagPage() {
     error: chatError,
     selectConversation,
     startComposing,
-    startNewConversation,
     deleteConversation,
     sendMessage,
   } = useConversation(token, "rag");
@@ -225,17 +222,14 @@ export function RagPage() {
   // ── Chat ───────────────────────────────────────────────────────────────
   async function handleSend() {
     const content = draft.trim();
-    if (!content) return;
+    if (!content || sending) return;
     setDraft("");
-    if (!activeId) {
-      const conversation = await startNewConversation(
-        pendingScopeDocId ? [pendingScopeDocId] : undefined
-      );
-      if (!conversation) return;
-      await sendMessage(content, conversation.id, webSearch);
-      return;
-    }
-    await sendMessage(content, undefined, webSearch);
+    await sendMessage(
+      content,
+      activeId ?? undefined,
+      webSearch,
+      !activeId && pendingScopeDocId ? [pendingScopeDocId] : undefined
+    );
   }
 
   function handleNewChat() {
@@ -307,17 +301,17 @@ export function RagPage() {
       sidebar={
         <AppSidebar
           mode="rag"
-          search={search}
-          onSearchChange={setSearch}
-          onLiveSearchShortcut={() => {
-            setView("chat");
-            handleNewChat();
-            setWebSearch(true);
-          }}
           onNewChat={() => {
             setView("chat");
             handleNewChat();
           }}
+          conversations={conversations}
+          activeId={activeId}
+          onSelectConversation={(id) => {
+            setView("chat");
+            void selectConversation(id);
+          }}
+          onDeleteConversation={(id) => void deleteConversation(id)}
         />
       }
       main={
@@ -326,7 +320,7 @@ export function RagPage() {
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-neutral-800 sm:px-6">
             <div className="flex items-center gap-3">
               <h1 className="text-base font-semibold tracking-tight">
-                RAG Studio
+                RAG
               </h1>
               {documents.length > 0 && (
                 <span className="text-xs text-gray-400 dark:text-gray-500">
@@ -386,56 +380,97 @@ export function RagPage() {
                   </p>
                 )}
 
-                {!activeId ? (
+                {!(activeId || messages.length > 0 || sending) ? (
                   <WelcomeScreen
                     title="Ask your documents"
-                    subtitle="Answers are grounded in your indexed chunks and come with citations back to the source."
-                    actions={[
+                    subtitle="Answers are grounded in your indexed chunks with citations — powered by Llama 3.1 8B Instruct."
+                    categories={[
                       {
-                        icon: "💬",
-                        chipColor: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
-                        label: "Ask your documents",
-                        onClick: () => startComposing(),
+                        id: "ask",
+                        label: "Ask documents",
+                        prompt: "What are the main themes across my indexed documents?",
                       },
                       {
-                        icon: "📄",
-                        chipColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-                        label: "Upload a document",
-                        onClick: () => setView("documents"),
+                        id: "upload",
+                        label: "Upload",
                       },
                       {
-                        icon: "🧩",
-                        chipColor: "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-400",
-                        label: "Browse chunks visually",
-                        onClick: () => setView("browse"),
+                        id: "browse",
+                        label: "Browse chunks",
                       },
                       {
-                        icon: "🔑",
-                        chipColor: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400",
-                        label: "Get a RAG API key",
-                        onClick: () => setView("documents"),
+                        id: "keys",
+                        label: "API keys",
                       },
                     ]}
+                    cards={[
+                      {
+                        id: "r1",
+                        title: "Cited Q&A",
+                        subtitle: "Grounded answers",
+                        prompt:
+                          "Summarize the most important points in my documents and cite sources.",
+                        tone: "dark",
+                      },
+                      {
+                        id: "r2",
+                        title: "Compare docs",
+                        subtitle: "Multi-source",
+                        prompt:
+                          "Compare overlapping topics across my uploaded documents.",
+                        tone: "mist",
+                      },
+                      {
+                        id: "r3",
+                        title: "Find a clause",
+                        subtitle: "Precise retrieval",
+                        prompt:
+                          "Help me find the section that discusses pricing or liability.",
+                        tone: "forest",
+                      },
+                    ]}
+                    onCategory={(c) => {
+                      if (c.id === "upload" || c.id === "keys") setView("documents");
+                      else if (c.id === "browse") setView("browse");
+                      else if (c.prompt) setDraft(c.prompt);
+                    }}
+                    onCard={(c) => {
+                      setDraft(c.prompt);
+                    }}
+                    composer={
+                      <Composer
+                        value={draft}
+                        onChange={setDraft}
+                        onSubmit={() => void handleSend()}
+                        disabled={sending}
+                        placeholder="Ask your documents…"
+                        webSearch={webSearch}
+                        onToggleWebSearch={() => setWebSearch((v) => !v)}
+                        onAttach={() => setView("documents")}
+                        compact
+                      />
+                    }
                   />
                 ) : (
-                  <MessageThread
-                    messages={messages}
-                    sending={sending}
-                    emptyTitle="Ask your documents"
-                    emptyBody="Answers are grounded in your indexed chunks and come with citations back to the source."
-                  />
+                  <>
+                    <MessageThread
+                      messages={messages}
+                      sending={sending}
+                      emptyTitle="Ask your documents"
+                      emptyBody="Answers are grounded in your indexed chunks and come with citations back to the source."
+                    />
+                    <Composer
+                      value={draft}
+                      onChange={setDraft}
+                      onSubmit={() => void handleSend()}
+                      disabled={sending}
+                      placeholder="e.g. What does the doc say about pricing?"
+                      webSearch={webSearch}
+                      onToggleWebSearch={() => setWebSearch((v) => !v)}
+                      onAttach={() => setView("documents")}
+                    />
+                  </>
                 )}
-
-                <Composer
-                  value={draft}
-                  onChange={setDraft}
-                  onSubmit={() => void handleSend()}
-                  disabled={sending}
-                  placeholder="e.g. What does the doc say about pricing?"
-                  webSearch={webSearch}
-                  onToggleWebSearch={() => setWebSearch((v) => !v)}
-                  onAttach={() => setView("documents")}
-                />
               </div>
             )}
 
@@ -704,22 +739,6 @@ export function RagPage() {
             )}
           </div>
         </div>
-      }
-      rightPanel={
-        <AppRightPanel
-          conversations={conversations}
-          activeId={activeId}
-          search={search}
-          onSelect={(id) => {
-            setView("chat");
-            void selectConversation(id);
-          }}
-          onDelete={(id) => void deleteConversation(id)}
-          onNewChat={() => {
-            setView("chat");
-            handleNewChat();
-          }}
-        />
       }
     />
   );

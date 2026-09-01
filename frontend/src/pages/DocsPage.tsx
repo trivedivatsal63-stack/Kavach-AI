@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Layout } from "../components/Layout";
 import { CodeBlock } from "../components/CodeBlock";
+import { MODEL_LABEL, MODEL_NAME } from "../lib/modelInfo";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4001";
-const MODEL_NAME = "muse-glimmer-30b-awq";
 
 const curlExample = `curl ${API_BASE_URL}/v1/chat/completions \\
   -H "Authorization: Bearer <your-api-key>" \\
@@ -61,6 +61,50 @@ resp = httpx.post(
 print(resp.json()["answer"])
 # resp.json()["citations"] holds the source chunks + similarity scores
 # resp.json()["webCitations"] holds live web sources, only when webSearch was true`;
+
+const complianceCurlExample = `curl ${API_BASE_URL}/v1/compliance/query \\
+  -H "Authorization: Bearer <your-compliance-api-key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "sources": ["SEBI", "RBI"],
+    "lookbackDays": 30
+  }'`;
+
+const complianceOpenAICurl = `curl ${API_BASE_URL}/v1/chat/completions \\
+  -H "Authorization: Bearer <your-compliance-api-key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "harrier-compliance",
+    "messages": [{"role": "user", "content": "check compliance"}],
+    "sources": ["SEBI", "RBI"],
+    "lookbackDays": 30
+  }'`;
+
+const compliancePythonExample = `from openai import OpenAI
+
+# Dedicated endpoint
+import httpx
+resp = httpx.post(
+    "${API_BASE_URL}/v1/compliance/query",
+    headers={"Authorization": "Bearer <your-compliance-api-key>"},
+    json={"sources": ["SEBI", "RBI"], "lookbackDays": 30},
+)
+print(resp.json()["table"])  # or resp.json()["runId"]
+
+# OpenAI-compatible (same key, no new client)
+client = OpenAI(
+    base_url="${API_BASE_URL}/v1",
+    api_key="<your-compliance-api-key>",
+)
+
+resp = client.chat.completions.create(
+    model="harrier-compliance",
+    messages=[{"role": "user", "content": "check compliance"}],
+    extra_body={"sources": ["SEBI", "RBI"], "lookbackDays": 30},
+)
+
+print(resp.choices[0].message.content)  # JSON {total, table}
+# resp.compliance.table also holds the structured table`;
 
 function TabButton({
   active,
@@ -120,6 +164,9 @@ export function DocsPage() {
               <code className="mt-1.5 block overflow-x-auto rounded-lg bg-gray-100 px-3 py-2 text-sm dark:bg-neutral-800">
                 {MODEL_NAME}
               </code>
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {MODEL_LABEL}
+              </p>
             </div>
           </div>
         </div>
@@ -194,6 +241,39 @@ export function DocsPage() {
               <CodeBlock
                 code={lang === "curl" ? ragCurlExample : ragPythonExample}
               />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Compliance check API — OpenAI compatible</h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Generate a <strong>Compliance</strong> key from the{" "}
+              <a href="/dashboard" className="link">Dashboard</a> (name + expiry) — then call either the dedicated endpoint or the OpenAI-compatible path with the same key. Sequential evaluation per circular (context 8192), WDM profile prefilled. Base URL is <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">{API_BASE_URL}/v1</code> locally and your Runpod host when deployed — set via <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">VITE_API_BASE_URL</code>.
+            </p>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-3 dark:border-neutral-800">
+              <TabButton active={lang === "curl"} onClick={() => setLang("curl")}>curl</TabButton>
+              <TabButton active={lang === "python"} onClick={() => setLang("python")}>Python</TabButton>
+            </div>
+            <div className="p-5 space-y-4">
+              {lang === "curl" ? (
+                <>
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-gray-600">Dedicated</p>
+                    <CodeBlock code={complianceCurlExample} />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-medium text-gray-600">OpenAI-compatible</p>
+                    <CodeBlock code={complianceOpenAICurl} />
+                  </div>
+                </>
+              ) : (
+                <CodeBlock code={compliancePythonExample} />
+              )}
             </div>
           </div>
         </div>

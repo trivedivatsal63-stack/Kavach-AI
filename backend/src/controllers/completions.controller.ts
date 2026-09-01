@@ -6,6 +6,11 @@ import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constan
 import { findUserByPresentedApiKey } from "../services/keys.service";
 import { assertCanAct } from "../services/accountStatus.service";
 import { AppError } from "../middleware/errorHandler";
+import { getOrCreateProfile } from "../services/compliance/profile.service";
+import { ingestCirculars, listCircularsForRun } from "../services/compliance/circular.service";
+import { evaluateCircularSequential } from "../services/compliance/evaluator.service";
+import { resolveChatKey } from "../services/rag/chatKeys.service";
+import { prisma } from "../models/prisma";
 
 // The real front door for the OpenAI-compatible API — previously developers
 // pointed their OpenAI client straight at LiteLLM (see DocsPage.tsx, now
@@ -58,6 +63,54 @@ export async function completions(req: Request, res: Response) {
     }
 
     const body = (req.body ?? {}) as Record<string, unknown>;
+
+    // OpenAI-compatible compliance path: model harrier-compliance / compliance
+    const modelStr = typeof body.model === "string" ? body.model.toLowerCase() : "";
+    const isComplianceModel = modelStr.includes("compliance") || body.compliance === true || (body as any).compliance_check === true;
+    if (isComplianceModel) {
+      if (!owner) {
+        openAIError(res, 401, "Invalid API key for compliance check.", "authentication_error");
+        return;
+      }
+      // scope check: allow general or compliance keys; block if expired already handled in findUserByPresentedApiKey
+      const sources = Array.isArray((body as any).sources) ? ((body as any).sources as string[]) : ["SEBI", "RBI"];
+      const lookbackDays = typeof (body as any).lookbackDays === "number" ? (body as any).lookbackDays : 30;
+      const companyProfileId = typeof (body as any).companyProfileId === "string" ? (body as any).companyProfileId : undefined;
+      let profileId = companyProfileId;
+      if (!profileId) {
+        const p = await getOrCreateProfile(owner.id);
+        profileId = p.id;
+      }
+      const profile = await prisma.companyProfile.findUnique({ where: { id: profileId } });
+      if (!profile) { openAIError(res, 400, "Company profile not found.", "invalid_request_error"); return; }
+      let complianceKey = "";
+      try {
+        const userRow = await prisma.user.findUnique({ where: { id: owner.id } });
+        if (userRow) {
+          const k = await resolveChatKey(owner.id, Number(userRow.creditBalanceUsd));
+          complianceKey = k.rawKey;
+        }
+      } catch { complianceKey = ""; }
+      await ingestCirculars(sources as any, lookbackDays).catch(() => {});
+      const circulars = await listCircularsForRun(sources, lookbackDays);
+      const table: any[] = [];
+      for (const c of circulars) {
+        await evaluateCircularSequential(complianceKey, profile as any, c as any);
+        const evals = await prisma.circularEvaluation.findMany({ where: { circularId: c.id, companyProfileId: profileId }, orderBy: { pointIndex: "asc" } });
+        table.push({ id: c.id, source: c.source, title: c.title, url: c.sourceUrl, pdfUrl: c.pdfUrl, publishedAt: c.publishedAt, points: evals.map((e) => ({ pointIndex: e.pointIndex, text: e.pointText, applicable: e.applicable, reason: e.reason, deadline: e.deadline, checklist: e.checklist })) });
+      }
+      const content = JSON.stringify({ total: circulars.length, table }, null, 2);
+      res.json({
+        id: `chatcmpl-compliance-${Date.now()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: body.model,
+        choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        compliance: { total: circulars.length, table },
+      });
+      return;
+    }
 
     if (body.stream === true) {
       openAIError(

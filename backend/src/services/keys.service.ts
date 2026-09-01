@@ -7,19 +7,29 @@ import {
   testLiteLLMKey,
 } from "./litellm.service";
 
-export async function createKey(userId: string) {
+export async function createKey(
+  userId: string,
+  opts: { scope?: string; name?: string; expiresAt?: Date | null; duration?: string } = {}
+) {
+  const { scope = "general", name, expiresAt, duration } = opts;
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const maxBudget = user.creditBalanceUsd.toNumber();
 
-  const { key, tokenId } = await generateLiteLLMKey(userId, maxBudget);
+  const { key, tokenId } = await generateLiteLLMKey(userId, maxBudget, {
+    duration,
+    keyAlias: name,
+  });
   const apiKey = await prisma.apiKey.create({
-    data: { userId, litellmKeyId: tokenId },
+    data: { userId, litellmKeyId: tokenId, scope, name: name?.trim() || null, expiresAt },
   });
 
   return {
     id: apiKey.id,
     key,
     createdAt: apiKey.createdAt,
+    name: apiKey.name,
+    scope: apiKey.scope,
+    expiresAt: apiKey.expiresAt,
   };
 }
 
@@ -31,6 +41,9 @@ export async function listKeys(userId: string) {
 
   return apiKeys.map((k) => ({
     id: k.id,
+    name: (k as any).name ?? null,
+    scope: (k as any).scope ?? "general",
+    expiresAt: (k as any).expiresAt ?? null,
     createdAt: k.createdAt,
     revokedAt: k.revokedAt,
   }));
@@ -63,9 +76,19 @@ export async function findUserByPresentedApiKey(rawKey: string) {
     },
     select: {
       user: { select: { id: true, status: true, deletedAt: true } },
+      expiresAt: true,
     },
   });
-  return apiKey?.user ?? null;
+  if (!apiKey) return null;
+  if ((apiKey as any).expiresAt && new Date((apiKey as any).expiresAt) < new Date()) return null;
+  return apiKey.user ?? null;
+}
+
+export async function isApiKeyExpiredByRaw(rawKey: string): Promise<boolean> {
+  const hash = createHash("sha256").update(rawKey).digest("hex");
+  const row = await prisma.apiKey.findFirst({ where: { OR: [{ litellmKeyId: hash }, { litellmKeyId: rawKey }] }, select: { expiresAt: true } });
+  if (!row || !(row as any).expiresAt) return false;
+  return new Date((row as any).expiresAt) < new Date();
 }
 
 export async function testKey(apiKey: string, message?: string) {

@@ -10,13 +10,13 @@ import {
   type ConversationSummary,
 } from "../lib/api";
 import type { UIMessage } from "../components/chat/MessageThread";
+import { useAuth } from "../context/AuthContext";
 
-// The de-duplication point for the chat-app shell — used by both ChatPage
-// (mode="chat") and RagPage (mode="rag") so conversation list/thread/send
-// logic isn't written twice. RAG-specific bits (document scope) are passed
-// through startNewConversation's documentIds param; everything else is
-// mode-agnostic.
+// Shared by ChatPage (mode="chat") and RagPage (mode="rag"). First-message
+// creation is folded into sendMessage so the UI can flip to the thread and
+// show "Generating…" immediately — before any network round-trip.
 export function useConversation(token: string | null, mode: ConversationMode) {
+  const { user, updateUser } = useAuth();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -55,11 +55,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
   );
 
   // Local-only reset — clears the active conversation so the shell shows an
-  // empty "new chat" state, without creating a backend row yet. Actual
-  // creation happens lazily on the first sent message (see sendMessage),
-  // so clicking "+ New chat" and never typing anything doesn't litter the
-  // sidebar with empty conversations. RAG Studio uses this same reset to
-  // show its document-scope picker before a conversation exists.
+  // empty "new chat" state, without creating a backend row yet.
   const startComposing = useCallback(() => {
     setActiveId(null);
     setMessages([]);
@@ -93,46 +89,73 @@ export function useConversation(token: string | null, mode: ConversationMode) {
   );
 
   const sendMessage = useCallback(
-    // targetId lets a caller that JUST created a conversation (via
-    // startNewConversation, an async state update) pass its id explicitly
-    // instead of relying on `activeId` from this closure — immediately
-    // after setActiveId(), activeId here can still be stale until the next
-    // render, which would otherwise make this silently no-op.
-    async (content: string, targetId?: string, webSearch?: boolean) => {
-      const conversationId = targetId ?? activeId;
-      if (!token || !conversationId || sending) return;
-      setError(null);
+    // targetId: pass an id when the caller already created a conversation.
+    // documentIds: used only when lazily creating on the first RAG message.
+    async (
+      content: string,
+      targetId?: string,
+      webSearch?: boolean,
+      documentIds?: string[]
+    ) => {
+      if (!token || sending) return;
+
       const optimisticId = crypto.randomUUID();
-      setMessages((m) => [
-        ...m,
-        { id: optimisticId, role: "user", content },
-      ]);
+      setError(null);
+      setMessages((m) => [...m, { id: optimisticId, role: "user", content }]);
       setSending(true);
+      const startedAt = performance.now();
+
+      let conversationId = targetId ?? activeId;
+
       try {
+        if (!conversationId) {
+          const { conversation } = await createConversation(
+            token,
+            mode,
+            documentIds
+          );
+          setConversations((prev) => [conversation, ...prev]);
+          setActiveId(conversation.id);
+          conversationId = conversation.id;
+        }
+
         const result = await sendConversationMessage(
           token,
           conversationId,
           content,
           webSearch
         );
+        const latencyMs = Math.round(performance.now() - startedAt);
+        const billing = result.billing;
         setMessages((m) => [
           ...m.filter((msg) => msg.id !== optimisticId),
           result.userMessage,
-          result.assistantMessage,
+          {
+            ...result.assistantMessage,
+            latencyMs,
+            costUsd: billing?.costUsd,
+            promptTokens: billing?.promptTokens,
+            completionTokens: billing?.completionTokens,
+          },
         ]);
         setConversations((prev) =>
           prev
             .map((c) => (c.id === conversationId ? result.conversation : c))
             .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
         );
+        if (billing && user) {
+          updateUser({ ...user, creditBalanceUsd: billing.remainingUsd });
+        }
       } catch (err) {
+        const message =
+          err instanceof ApiError ? err.message : "Failed to send message.";
+        setError(message);
         setMessages((m) => [
           ...m,
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content:
-              err instanceof ApiError ? err.message : "Failed to send message.",
+            content: message,
             error: true,
           },
         ]);
@@ -140,7 +163,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
         setSending(false);
       }
     },
-    [token, activeId, sending]
+    [token, activeId, sending, mode, user, updateUser]
   );
 
   return {

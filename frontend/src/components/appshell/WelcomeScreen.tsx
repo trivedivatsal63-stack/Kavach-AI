@@ -1,57 +1,136 @@
 import type { ReactNode } from "react";
 
-export interface QuickAction {
-  icon: ReactNode;
-  chipColor: string;
+export interface WelcomeCategory {
+  id: string;
   label: string;
-  onClick: () => void;
+  prompt?: string;
 }
 
-// Center empty-state — heading, subtitle, 2x2 quick-action grid. Each page
-// (Chat, RAG Studio) supplies its own 4 real actions rather than this
-// component hardcoding cross-page navigation.
-export function WelcomeScreen({
-  title,
-  subtitle,
-  actions,
-}: {
+export interface WelcomeCard {
+  id: string;
   title: string;
   subtitle: string;
-  actions: QuickAction[];
+  prompt: string;
+  tone: "dark" | "mist" | "forest";
+}
+
+const DEFAULT_CATEGORIES: WelcomeCategory[] = [
+  { id: "ask", label: "Ask anything", prompt: "Explain how this gateway works in plain language." },
+  { id: "code", label: "Code help", prompt: "Write a TypeScript function that retries a fetch with backoff." },
+  { id: "docs", label: "Summarize", prompt: "Summarize the key tradeoffs of FP16 vs AWQ for LLM serving." },
+  { id: "rag", label: "RAG ideas", prompt: "How should I structure documents for better RAG retrieval?" },
+  { id: "api", label: "API usage", prompt: "Show a curl example for OpenAI-compatible chat completions." },
+  { id: "compliance", label: "Compliance check", prompt: "__COMPLIANCE__" },
+];
+
+const DEFAULT_CARDS: WelcomeCard[] = [
+  {
+    id: "c1",
+    title: "Gateway overview",
+    subtitle: "Keys, budgets, LiteLLM",
+    prompt: "Give me a short overview of how to use this LLM gateway with API keys and budgets.",
+    tone: "dark",
+  },
+  {
+    id: "c2",
+    title: "Long-context tips",
+    subtitle: "16K window · Llama 3.1 8B",
+    prompt: "How should I structure prompts to make the most of a 16K context window?",
+    tone: "mist",
+  },
+  {
+    id: "c3",
+    title: "RAG studio",
+    subtitle: "Upload · cite · answer",
+    prompt: "Walk me through uploading a PDF and asking a cited question in RAG mode.",
+    tone: "forest",
+  },
+  {
+    id: "c4",
+    title: "Compliance check",
+    subtitle: "SEBI · RBI · NSE · MCA",
+    prompt: "__COMPLIANCE__",
+    tone: "forest",
+  },
+];
+
+export function WelcomeScreen({
+  title = "What can I build for you?",
+  subtitle = "Interact with Harrier and explore answers grounded in your stack",
+  categories = DEFAULT_CATEGORIES,
+  cards = DEFAULT_CARDS,
+  activeCategoryId,
+  onCategory,
+  onCard,
+  composer,
+}: {
+  title?: string;
+  subtitle?: string;
+  categories?: WelcomeCategory[];
+  cards?: WelcomeCard[];
+  activeCategoryId?: string;
+  onCategory?: (c: WelcomeCategory) => void;
+  onCard?: (c: WelcomeCard) => void;
+  /** Centered composer rendered under the hero subtitle */
+  composer?: ReactNode;
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-7 px-6 text-center">
-      <div className="space-y-2">
-        <h1 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center px-6 pt-16 pb-10 text-center sm:pt-20">
+        <h1 className="font-display text-4xl leading-tight text-gray-900 sm:text-5xl dark:text-white">
           {title}
         </h1>
-        <p className="max-w-md text-sm text-gray-500 dark:text-gray-400">
+        <p className="mt-3 max-w-lg text-sm text-gray-500 dark:text-gray-400">
           {subtitle}
         </p>
-      </div>
 
-      <div className="grid w-full max-w-lg grid-cols-2 gap-3">
-        {actions.map((action) => (
-          <button
-            key={action.label}
-            onClick={action.onClick}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
-          >
-            <span className="flex items-center gap-3">
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-base ${action.chipColor}`}
+        {composer && <div className="mt-8 w-full text-left">{composer}</div>}
+
+        <div className="mt-6 flex w-full flex-wrap items-center justify-center gap-2">
+          {categories.map((c) => {
+            const active = activeCategoryId === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onCategory?.(c)}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                  active
+                    ? "bg-gray-900 text-white dark:bg-white dark:text-gray-900"
+                    : "bg-white text-gray-600 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-neutral-900 dark:text-gray-300 dark:ring-neutral-700"
+                }`}
               >
-                {action.icon}
-              </span>
-              <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">
-                {action.label}
-              </span>
-            </span>
-            <span className="shrink-0 text-lg leading-none text-gray-300 dark:text-gray-600">
-              +
-            </span>
-          </button>
-        ))}
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-8 grid w-full gap-3 sm:grid-cols-3">
+          {cards.map((card) => (
+            <button
+              key={card.id}
+              type="button"
+              onClick={() => onCard?.(card)}
+              className={`group relative overflow-hidden rounded-2xl p-4 text-left shadow-sm transition-transform hover:-translate-y-0.5 ${
+                card.tone === "dark"
+                  ? "bg-gradient-to-br from-neutral-900 to-neutral-700 text-white"
+                  : card.tone === "mist"
+                    ? "bg-gradient-to-br from-stone-200 to-stone-100 text-gray-900"
+                    : "bg-gradient-to-br from-emerald-950 to-emerald-800 text-emerald-50"
+              }`}
+            >
+              <p className="text-[11px] font-semibold tracking-wide uppercase opacity-70">
+                {card.subtitle}
+              </p>
+              <p className="mt-6 text-base font-semibold leading-snug">{card.title}</p>
+            </button>
+          ))}
+        </div>
+
+        <p className="mt-auto pt-10 text-[11px] text-gray-400 dark:text-gray-600">
+          Generated by AI. For reference only. Serving Llama 3.1 8B Instruct · FP16 · 16K.
+        </p>
       </div>
     </div>
   );

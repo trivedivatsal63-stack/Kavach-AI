@@ -23,6 +23,7 @@ import {
   CompletionError,
   mapCompletionErrorStatus,
 } from "../services/rag/completion.service";
+import { getLiteLLMKeyInfo } from "../services/litellm.service";
 import { filterOwnedDocumentIds } from "./rag/chat.controller";
 
 function isValidMode(value: unknown): value is ConversationMode {
@@ -140,7 +141,10 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
 
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const balance = user.creditBalanceUsd.toNumber();
-    const { rawKey } = await resolveChatKey(userId, balance);
+    const { rawKey, tokenId } = await resolveChatKey(userId, balance);
+
+    const spendBefore =
+      (await getLiteLLMKeyInfo(tokenId).catch(() => null))?.spend ?? 0;
 
     // Explicit per-message opt-in only — a toggle the user flips in the
     // composer, never inferred. See services/liveSearch/ for why.
@@ -149,7 +153,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     let assistantContent: string;
     let citations: unknown = undefined;
     let webCitations: unknown = undefined;
-    let usage: { promptTokens: number; completionTokens: number } | null = null;
+    let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | null = null;
 
     if (conversation.mode === CONVERSATION_MODE.RAG) {
       const documentIds = Array.isArray(conversation.documentIds)
@@ -192,8 +196,26 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     );
     await touchConversation(conversationId, content);
 
+    const keyInfo = await getLiteLLMKeyInfo(tokenId).catch(() => null);
+    const spendAfter = keyInfo?.spend ?? spendBefore;
+    const maxBudget = keyInfo?.maxBudget ?? balance;
+    const costUsd = Math.max(0, spendAfter - spendBefore);
+    const remainingUsd = Math.max(0, maxBudget - spendAfter);
+
     const updated = await getConversationMeta(userId, conversationId);
-    res.json({ userMessage, assistantMessage, conversation: updated });
+    res.json({
+      userMessage,
+      assistantMessage,
+      conversation: updated,
+      billing: {
+        costUsd,
+        remainingUsd,
+        totalSpendUsd: spendAfter,
+        promptTokens: usage?.promptTokens ?? 0,
+        completionTokens: usage?.completionTokens ?? 0,
+        totalTokens: usage?.totalTokens ?? 0,
+      },
+    });
   } catch (err) {
     if (err instanceof CompletionError) {
       next(new AppError(mapCompletionErrorStatus(err.status), err.message));
@@ -201,7 +223,19 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
     }
     if (!(err instanceof AppError)) {
       console.error("POST /conversations/:id/messages failed:", err);
-      next(new AppError(500, "Failed to send message."));
+      const detail =
+        err instanceof Error
+          ? err.message ||
+            (err as { cause?: { message?: string } }).cause?.message
+          : undefined;
+      next(
+        new AppError(
+          500,
+          detail && detail !== "fetch failed"
+            ? `Failed to send message: ${detail}`
+            : "Failed to send message."
+        )
+      );
       return;
     }
     next(err);

@@ -26,6 +26,9 @@ export type OtpPurpose = "signup" | "login" | "reset";
 
 export interface ApiKeySummary {
   id: string;
+  name: string | null;
+  scope: string;
+  expiresAt: string | null;
   createdAt: string;
   revokedAt: string | null;
 }
@@ -33,6 +36,9 @@ export interface ApiKeySummary {
 export interface GeneratedKey {
   id: string;
   key: string;
+  name?: string | null;
+  scope?: string;
+  expiresAt?: string | null;
   createdAt: string;
 }
 
@@ -151,8 +157,8 @@ export function listKeys(token: string) {
   return request<ApiKeySummary[]>("/keys", {}, token);
 }
 
-export function generateKey(token: string) {
-  return request<GeneratedKey>("/keys", { method: "POST" }, token);
+export function generateKey(token: string, opts?: { scope?: string; name?: string; expiresIn?: string }) {
+  return request<GeneratedKey>("/keys", { method: "POST", body: JSON.stringify(opts ?? {}) }, token);
 }
 
 export function revokeKey(token: string, id: string) {
@@ -412,6 +418,7 @@ export interface SendMessageResponse {
   userMessage: ConversationMessage;
   assistantMessage: ConversationMessage;
   conversation: ConversationSummary;
+  billing?: { costUsd?: number; promptTokens?: number; completionTokens?: number; remainingUsd: number };
 }
 
 export function listConversations(token: string, mode: ConversationMode) {
@@ -470,6 +477,32 @@ export function sendConversationMessage(
     },
     token
   );
+}
+
+// ── Compliance ─────────────────────────────────────────────────────────
+export function getComplianceProfile(token: string) {
+  return request<{ profiles: any[] }>("/compliance/profile", {}, token);
+}
+export function createComplianceProfile(token: string, data: any) {
+  return request<{ profile: any }>("/compliance/profile", { method: "POST", body: JSON.stringify(data) }, token);
+}
+export function updateComplianceProfile(token: string, id: string, data: any) {
+  return request<{ profile: any }>(`/compliance/profile/${id}`, { method: "PATCH", body: JSON.stringify(data) }, token);
+}
+export function createComplianceRun(token: string, data: { sources?: string[]; lookbackDays?: number; companyProfileId?: string }) {
+  return request<{ run: any }>("/compliance/runs", { method: "POST", body: JSON.stringify(data) }, token);
+}
+export function getComplianceRun(token: string, id: string) {
+  return request<{ run: any; evaluations: any[] }>(`/compliance/runs/${id}`, {}, token);
+}
+export function getComplianceTable(token: string, id: string) {
+  return request<{ run: any; table: any[] }>(`/compliance/runs/${id}/table`, {}, token);
+}
+export function listComplianceRuns(token: string) {
+  return request<{ runs: any[] }>("/compliance/runs", {}, token);
+}
+export function patchChecklist(token: string, evaluationId: string, checklist: any) {
+  return request<{ evaluation: any }>(`/compliance/evaluations/${evaluationId}/checklist`, { method: "PATCH", body: JSON.stringify({ checklist }) }, token);
 }
 
 // ── Superadmin ────────────────────────────────────────────────────────────

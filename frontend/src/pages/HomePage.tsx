@@ -3,16 +3,17 @@ import { useAuth } from "../context/AuthContext";
 import { Layout } from "../components/Layout";
 import { ShieldMark } from "../components/ShieldMark";
 import { CodeBlock } from "../components/CodeBlock";
+import { MODEL_LABEL, MODEL_NAME } from "../lib/modelInfo";
 
 const CURL_EXAMPLE = `curl https://your-gateway/v1/chat/completions \\
   -H "Authorization: Bearer $KAVACH_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "muse-glimmer-30b-awq",
+    "model": "${MODEL_NAME}",
     "messages": [{"role": "user", "content": "Summarize this clause..."}]
   }'`;
 
-const flowChat = ["Your app", "Harrier gateway", "LiteLLM", "vLLM"];
+const flowChat = ["Your app", "Harrier gateway", "LiteLLM", "TensorRT-LLM"];
 const flowRag = ["Your documents", "Chunk + embed", "Qdrant", "Cited answer"];
 
 const features = [
@@ -57,16 +58,16 @@ export function HomePage() {
             </span>
           </h1>
           <p className="max-w-xl text-base text-gray-600 sm:text-lg dark:text-gray-400">
-            Harrier runs a fully self-hosted stack — vLLM serving
-            muse-glimmer-30b-awq through LiteLLM — with API keys, budgets, usage
-            tracking and a private RAG store, all on infrastructure you
-            control.
+            Harrier runs a fully self-hosted stack — TensorRT-LLM serving{" "}
+            {MODEL_LABEL} ({MODEL_NAME}) through LiteLLM — with API keys,
+            budgets, usage tracking and a private RAG store, all on
+            infrastructure you control.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3">
             {token ? (
-              <Link to="/dashboard" className="btn-primary px-5 py-2.5">
-                Go to dashboard
+              <Link to="/chat" className="btn-primary px-5 py-2.5">
+                Go to chat
               </Link>
             ) : (
               <>

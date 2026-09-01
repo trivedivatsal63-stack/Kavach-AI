@@ -30,6 +30,8 @@ model User {
   createdAt        DateTime  @default(now())
   apiKeys          ApiKey[]
   conversations    Conversation[]
+  companyProfiles  CompanyProfile[]
+  complianceRuns   ComplianceRun[]
 
   @@index([role])
   @@index([status])
@@ -63,6 +65,9 @@ model ApiKey {
   userId       String
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   litellmKeyId String    @unique
+  name         String?
+  scope        String    @default("general") // general | compliance
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz
   createdAt    DateTime  @default(now())
   revokedAt    DateTime?
 
@@ -188,6 +193,90 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@map("messages")
+}
+
+// ── Compliance module ───────────────────────────────────────────────
+model CompanyProfile {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @default("WDM Profile")
+  entityType String  @map("entity_type") // e.g. WDM participant
+  wdmSegment Boolean @default(true) @map("wdm_segment")
+  registrations String[] // SEBI registrations held
+  products  String[] // G-Sec, Corp Bonds, CP, NDS-OM ...
+  raw       Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  circulars RegulatoryCircular[]
+  evaluations CircularEvaluation[]
+  runs      ComplianceRun[]
+
+  @@index([userId])
+  @@map("company_profiles")
+}
+
+model RegulatoryCircular {
+  id               String   @id @default(uuid())
+  source           String   // SEBI | RBI | NSE | MCA
+  sourceUrl        String   @unique @map("source_url")
+  title            String
+  publishedAt      DateTime? @map("published_at") @db.Timestamptz
+  pdfUrl           String?  @map("pdf_url")
+  pdfHash          String?  @map("pdf_hash")
+  rawText          String?  @map("raw_text") @db.Text
+  status           String   @default("pending") // pending | parsed | evaluated | failed
+  companyProfileId String?  @map("company_profile_id")
+  companyProfile   CompanyProfile? @relation(fields: [companyProfileId], references: [id])
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  evaluations CircularEvaluation[]
+
+  @@index([source, publishedAt(sort: Desc)])
+  @@map("regulatory_circulars")
+}
+
+model CircularEvaluation {
+  id               String   @id @default(uuid())
+  circularId       String   @map("circular_id")
+  circular         RegulatoryCircular @relation(fields: [circularId], references: [id], onDelete: Cascade)
+  companyProfileId String   @map("company_profile_id")
+  companyProfile   CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+  pointIndex       Int      @map("point_index")
+  pointText        String   @map("point_text") @db.Text
+  summary          String?  @db.Text
+  applicable       String   // APPLICABLE | NOT_APPLICABLE | REVIEW
+  reason           String?  @db.Text
+  deadline         DateTime? @db.Timestamptz
+  obligationType   String?  @map("obligation_type")
+  checklist        Json?    @db.JsonB // [{label, done}]
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([circularId, companyProfileId, pointIndex])
+  @@index([companyProfileId, applicable])
+  @@map("circular_evaluations")
+}
+
+model ComplianceRun {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyProfileId String   @map("company_profile_id")
+  companyProfile   CompanyProfile @relation(fields: [companyProfileId], references: [id])
+  conversationId   String?  @map("conversation_id")
+  sources          String[] // ["SEBI","RBI"]
+  lookbackDays     Int      @default(30) @map("lookback_days")
+  status           String   @default("running") // running | done | failed
+  totalCirculars   Int      @default(0) @map("total_circulars")
+  completed        Int      @default(0)
+  resultTable      Json?    @map("result_table") @db.JsonB
+  error            String?  @db.Text
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@map("compliance_runs")
 }
 
 // Superadmin actions (pause/block/delete/revoke). Written by admin.service

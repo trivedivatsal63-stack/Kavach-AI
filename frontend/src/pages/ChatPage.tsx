@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { AppShell } from "../components/appshell/AppShell";
 import { AppSidebar } from "../components/appshell/AppSidebar";
-import { AppRightPanel } from "../components/appshell/AppRightPanel";
 import { WelcomeScreen } from "../components/appshell/WelcomeScreen";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Composer } from "../components/chat/Composer";
 import { useAuth } from "../context/AuthContext";
 import { useConversation } from "../hooks/useConversation";
+import { ComplianceFlow } from "../components/compliance/ComplianceFlow";
 
 export function ChatPage() {
   const { token } = useAuth();
@@ -18,41 +18,53 @@ export function ChatPage() {
     error,
     selectConversation,
     startComposing,
-    startNewConversation,
     deleteConversation,
     sendMessage,
   } = useConversation(token, "chat");
 
   const [draft, setDraft] = useState("");
   const [webSearch, setWebSearch] = useState(false);
-  const [search, setSearch] = useState("");
+  const [activeCategoryId, setActiveCategoryId] = useState<string | undefined>();
+  const [showCompliance, setShowCompliance] = useState(false);
+  const [complianceRunId, setComplianceRunId] = useState<string | null>(null);
 
-  async function handleSend(presetWebSearch?: boolean) {
-    const content = draft.trim();
-    if (!content) return;
-    const useWebSearch = presetWebSearch ?? webSearch;
+  async function handleSend(preset?: string, forceWeb?: boolean) {
+    if (preset === "__COMPLIANCE__") { setShowCompliance(true); return; }
+    const content = (preset ?? draft).trim();
+    if (!content || sending) return;
+    const useWebSearch = forceWeb ?? webSearch;
     setDraft("");
-    if (!activeId) {
-      const conversation = await startNewConversation();
-      if (!conversation) return;
-      await sendMessage(content, conversation.id, useWebSearch);
-      return;
-    }
-    await sendMessage(content, undefined, useWebSearch);
+    // sendMessage creates the conversation lazily and immediately flips the
+    // UI into the thread with a user bubble + "Generating…".
+    await sendMessage(content, activeId ?? undefined, useWebSearch);
   }
+
+  const inThread = Boolean(activeId) || messages.length > 0 || sending;
+
+  const composer = (
+    <Composer
+      value={draft}
+      onChange={setDraft}
+      onSubmit={() => void handleSend()}
+      disabled={sending}
+      placeholder="How can I help you today?"
+      webSearch={webSearch}
+      onToggleWebSearch={() => setWebSearch((v) => !v)}
+      compact={!inThread}
+    />
+  );
 
   return (
     <AppShell
       sidebar={
         <AppSidebar
           mode="chat"
-          search={search}
-          onSearchChange={setSearch}
-          onLiveSearchShortcut={() => {
-            startComposing();
-            setWebSearch(true);
-          }}
           onNewChat={startComposing}
+          conversations={conversations}
+          activeId={activeId}
+          onSelectConversation={(id) => void selectConversation(id)}
+          onDeleteConversation={(id) => void deleteConversation(id)}
+          onSelectComplianceRun={(id) => { setComplianceRunId(id); setShowCompliance(true); }}
         />
       }
       main={
@@ -63,69 +75,39 @@ export function ChatPage() {
             </p>
           )}
 
-          {!activeId ? (
+          {showCompliance ? (
+            <div className="flex-1 overflow-y-auto p-6">
+              <ComplianceFlow token={token!} initialRunId={complianceRunId} onClose={() => { setShowCompliance(false); setComplianceRunId(null); }} />
+            </div>
+          ) : !inThread ? (
             <WelcomeScreen
-              title="Welcome to Harrier Kavach"
-              subtitle="Ask anything, ground answers in your documents, or search the live web — all on infrastructure you control."
-              actions={[
-                {
-                  icon: "💬",
-                  chipColor: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
-                  label: "Ask a question",
-                  onClick: () => startComposing(),
-                },
-                {
-                  icon: "📄",
-                  chipColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-                  label: "Search my documents",
-                  onClick: () => (window.location.href = "/rag"),
-                },
-                {
-                  icon: "🌐",
-                  chipColor: "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-400",
-                  label: "Search the web",
-                  onClick: () => {
-                    startComposing();
-                    setWebSearch(true);
-                  },
-                },
-                {
-                  icon: "🔑",
-                  chipColor: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400",
-                  label: "Get an API key",
-                  onClick: () => (window.location.href = "/rag?view=keys"),
-                },
-              ]}
+              activeCategoryId={activeCategoryId}
+              onCategory={(c) => {
+                if (c.id === "compliance" || c.prompt === "__COMPLIANCE__") { setShowCompliance(true); return; }
+                setActiveCategoryId(c.id);
+                if (c.prompt) setDraft(c.prompt);
+              }}
+              onCard={(c) => {
+                if (c.id === "c4" || c.prompt === "__COMPLIANCE__") { setShowCompliance(true); return; }
+                void handleSend(c.prompt);
+              }}
+              composer={composer}
             />
           ) : (
-            <MessageThread
-              messages={messages}
-              sending={sending}
-              emptyTitle="Start a conversation"
-              emptyBody="Ask anything — this is a general-purpose chat against the model, no documents involved."
-            />
+            <>
+              <div className="shrink-0 p-2 flex justify-end">
+                <button onClick={() => setShowCompliance(true)} className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white">Compliance check</button>
+              </div>
+              <MessageThread
+                messages={messages}
+                sending={sending}
+                emptyTitle="Start a conversation"
+                emptyBody="Ask anything — general chat against Llama 3.1 8B Instruct."
+              />
+              {composer}
+            </>
           )}
-
-          <Composer
-            value={draft}
-            onChange={setDraft}
-            onSubmit={() => void handleSend()}
-            disabled={sending}
-            placeholder="Message Harrier…"
-            webSearch={webSearch}
-            onToggleWebSearch={() => setWebSearch((v) => !v)}
-          />
         </div>
-      }
-      rightPanel={
-        <AppRightPanel
-          conversations={conversations}
-          activeId={activeId}
-          search={search}
-          onSelect={(id) => void selectConversation(id)}
-          onDelete={(id) => void deleteConversation(id)}
-          onNewChat={startComposing}
-        />
       }
     />
   );

@@ -8,6 +8,7 @@ import { pingQdrant } from "./services/rag/qdrant.service";
 import { purgeLegacyNonUuidUsers } from "./jobs/purgeLegacyUsers";
 import { bootstrapSuperadmin } from "./services/auth.service";
 import { smtpStatus } from "./services/mail.service";
+import { startComplianceCron } from "./routes/compliance.routes";
 
 async function bootstrap() {
   try {
@@ -41,6 +42,8 @@ async function bootstrap() {
     console.log(`API listening on port ${env.port}`);
     console.log(`LiteLLM gateway expected at ${env.litellmBaseUrl}`);
     console.log(`[mail] SMTP ${smtpStatus()}`);
+    startComplianceCron();
+    console.log(`[compliance] Cron started (24h)`);
   });
 }
 

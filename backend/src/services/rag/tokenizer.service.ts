@@ -15,17 +15,36 @@ import { ragConfig } from "../../config/rag";
 // Nothing here should be read as license to call vLLM directly for anything
 // else — every actual chat completion still goes through LiteLLM, unchanged
 // (see completion.service.ts).
+/** Rough fallback when the engine /tokenize endpoint is unreachable. */
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
 export async function countTokens(text: string): Promise<number> {
-  const res = await fetch(`${ragConfig.vllmBaseUrl}/tokenize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: ragConfig.chatModel, prompt: text }),
-  });
-  if (!res.ok) {
-    throw new Error(`vLLM /tokenize failed: ${res.status} ${await res.text()}`);
+  try {
+    const res = await fetch(`${ragConfig.vllmBaseUrl}/tokenize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: ragConfig.chatModel, prompt: text }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) {
+      console.warn(
+        `vLLM /tokenize failed (${res.status}); using estimate. ${await res.text()}`
+      );
+      return estimateTokens(text);
+    }
+    const data = (await res.json()) as { count: number };
+    if (typeof data.count !== "number" || !Number.isFinite(data.count)) {
+      return estimateTokens(text);
+    }
+    return data.count;
+  } catch (err) {
+    // Engine restarts / OpenAI-compat gaps must not kill chat or web-search
+    // turns — budget trimming becomes slightly conservative, not fatal.
+    console.warn("vLLM /tokenize unreachable; using estimate:", err);
+    return estimateTokens(text);
   }
-  const data = (await res.json()) as { count: number };
-  return data.count;
 }
 
 export interface HistoryTurn {
