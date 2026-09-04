@@ -237,6 +237,9 @@ export async function getUserActivity(id: string) {
       return {
         id: k.id,
         kind: "api" as const,
+        name: k.name,
+        keyPrefix: k.keyPrefix,
+        expiresAt: k.expiresAt,
         createdAt: k.createdAt,
         revokedAt: k.revokedAt,
         ...usage,
@@ -256,6 +259,8 @@ export async function getUserActivity(id: string) {
         id: k.id,
         kind: "rag" as const,
         name: k.name,
+        keyPrefix: k.keyPrefix,
+        expiresAt: k.expiresAt,
         createdAt: k.createdAt,
         revokedAt: k.revokedAt,
         ...usage,

@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS rag_keys (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   revoked_at TIMESTAMPTZ
 );
+-- Key-management columns (naming/expiry/prefix parity with ApiKey).
+-- CREATE TABLE IF NOT EXISTS won't add columns to existing tables, so
+-- these idempotent ALTERs run on every boot via ensureSchema().
+ALTER TABLE rag_keys ADD COLUMN IF NOT EXISTS key_prefix TEXT NOT NULL DEFAULT '';
+ALTER TABLE rag_keys ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_rag_keys_user ON rag_keys (user_id, created_at DESC);
 
 -- One hidden per-user chat key (encrypted raw value + hash + token_id) so

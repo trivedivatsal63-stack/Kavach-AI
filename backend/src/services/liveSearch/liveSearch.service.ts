@@ -2,9 +2,14 @@ import { searchWeb } from "./search.service";
 import { fetchPageText } from "./fetchPage.service";
 import { formatWebCitation } from "./webCitationFormat";
 import { countTokens } from "../rag/tokenizer.service";
-import { LIVE_SEARCH_CANDIDATE_POOL } from "../../utils/liveSearch.constants";
+import {
+  DOMAIN_PREFERRED_OUTLETS,
+  LIVE_SEARCH_CANDIDATE_POOL,
+  OFFICE_FILE_EXTENSIONS,
+} from "../../utils/liveSearch.constants";
 import type { WebCitation } from "./types";
 import { rerankChunks } from "../rag/reranker.service";
+import type { SearchDomain } from "./searchDecision.service";
 
 // Orchestrates one live-search round: search -> fetch each result's real
 // page text in parallel -> keep as many as fit a token budget. Only
@@ -15,6 +20,8 @@ import { rerankChunks } from "../rag/reranker.service";
 export async function getLiveSearchContext(input: {
   query: string;
   budgetTokens: number;
+  /** Purpose domain from the search router — reorders by outlet quality. */
+  domain?: SearchDomain;
 }): Promise<WebCitation[]> {
   let results;
   try {
@@ -41,11 +48,14 @@ export async function getLiveSearchContext(input: {
   // tracking params or http vs https.
   candidates = dedupByUrl(candidates);
 
-  // Optional cross-encoder rerank — generic accuracy improvement (no domain
-  // routing). Reuses RAG's reranker; best-effort fallback to SearXNG order
-  // if the embedding service is unreachable.
+  // Optional cross-encoder rerank — generic accuracy improvement. Reuses
+  // RAG's reranker; best-effort fallback to SearXNG order if the embedding
+  // service is unreachable.
   const reranked = await rerankWebCandidates(input.query, candidates);
-  const ordered = reranked ?? candidates;
+  // Purpose-domain outlet weighting (tast=k.md item 2): preferred outlets
+  // for the question's domain float up, office-file downloads sink one
+  // tier — stable reorder, nothing ever dropped.
+  const ordered = applyDomainWeighting(reranked ?? candidates, input.domain);
 
   // Token-budget walk — same discipline as retrieval.service.ts's retrieve()
   // (the earlier "raised the RAG limit to 12, blew the 2048-token window"
@@ -64,6 +74,48 @@ export async function getLiveSearchContext(input: {
   }
 
   return citations;
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isOfficeFile(url: string): boolean {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return OFFICE_FILE_EXTENSIONS.some((ext) => path.endsWith(ext));
+  } catch {
+    return false;
+  }
+}
+
+// Stable purpose-domain reorder over the reranked (or SearXNG) order:
+// preferred outlets for the domain sort first, office-file downloads sort
+// last. Equal keys keep their incoming relative order, and nothing is
+// ever filtered — the token-budget walk below still decides what fits.
+function applyDomainWeighting(
+  candidates: WebCitation[],
+  domain?: SearchDomain
+): WebCitation[] {
+  if (!domain || domain === "none" || candidates.length <= 1) return candidates;
+  // Empty outlet list (tech/general) still gets office-file demotion below.
+  const outlets = DOMAIN_PREFERRED_OUTLETS[domain] ?? [];
+  const scored = candidates.map((c, index) => {
+    const host = hostnameOf(c.url);
+    const preferred = outlets.some((o) => host === o || host.endsWith(`.${o}`));
+    const file = isOfficeFile(c.url);
+    // Tier 0 = preferred outlet, 1 = ordinary, 2 = office file.
+    const tier = preferred ? 0 : file ? 2 : 1;
+    return { c, index, tier };
+  });
+  if (scored.every((s) => s.tier === 1)) return candidates;
+  return scored
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((s) => s.c);
 }
 
 function dedupByUrl(candidates: WebCitation[]): WebCitation[] {

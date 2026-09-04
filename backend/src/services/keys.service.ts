@@ -7,18 +7,70 @@ import {
   testLiteLLMKey,
 } from "./litellm.service";
 
-export async function createKey(userId: string) {
+// Max key lifetime: 1 year. Null expiry = never expires.
+const MAX_KEY_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
+
+export function parseKeyName(raw: unknown): string {
+  const name = typeof raw === "string" ? raw.trim().slice(0, 60) : "";
+  if (!name) throw new AppError(400, "Key name is required.");
+  return name;
+}
+
+export function parseKeyExpiry(raw: unknown): Date | null {
+  if (raw == null || raw === "") return null;
+  const date = new Date(String(raw));
+  if (Number.isNaN(date.getTime())) {
+    throw new AppError(400, "expiresAt must be a valid date.");
+  }
+  if (date.getTime() <= Date.now()) {
+    throw new AppError(400, "expiresAt must be in the future.");
+  }
+  if (date.getTime() - Date.now() > MAX_KEY_LIFETIME_MS) {
+    throw new AppError(400, "Key lifetime cannot exceed 1 year.");
+  }
+  return date;
+}
+
+/** Non-secret identifier (OpenAI-dashboard style) — safe to list forever. */
+export function keyPrefixFor(rawKey: string): string {
+  const trimmed = rawKey.trim();
+  if (trimmed.length <= 11) return `${trimmed.slice(0, 3)}…${trimmed.slice(-2)}`;
+  return `${trimmed.slice(0, 7)}…${trimmed.slice(-4)}`;
+}
+
+export type KeyStatus = "active" | "expiring-soon" | "expired" | "revoked";
+
+export function keyStatusFor(key: { revokedAt: Date | null; expiresAt: Date | null }): KeyStatus {
+  if (key.revokedAt) return "revoked";
+  if (!key.expiresAt) return "active";
+  if (key.expiresAt.getTime() <= Date.now()) return "expired";
+  if (key.expiresAt.getTime() - Date.now() < 7 * 24 * 60 * 60 * 1000) return "expiring-soon";
+  return "active";
+}
+
+export async function createKey(
+  userId: string,
+  input?: { name?: unknown; expiresAt?: unknown }
+) {
+  const name = input?.name !== undefined ? parseKeyName(input.name) : "API key";
+  const expiresAt = parseKeyExpiry(input?.expiresAt);
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const maxBudget = user.creditBalanceUsd.toNumber();
 
-  const { key, tokenId } = await generateLiteLLMKey(userId, maxBudget);
+  const { key, tokenId } = await generateLiteLLMKey(userId, maxBudget, {
+    alias: name,
+    ...(expiresAt ? { expires: expiresAt } : {}),
+  });
   const apiKey = await prisma.apiKey.create({
-    data: { userId, litellmKeyId: tokenId },
+    data: { userId, litellmKeyId: tokenId, name, keyPrefix: keyPrefixFor(key), expiresAt },
   });
 
   return {
     id: apiKey.id,
     key,
+    name: apiKey.name,
+    keyPrefix: apiKey.keyPrefix,
+    expiresAt: apiKey.expiresAt,
     createdAt: apiKey.createdAt,
   };
 }
@@ -31,9 +83,23 @@ export async function listKeys(userId: string) {
 
   return apiKeys.map((k) => ({
     id: k.id,
+    name: k.name,
+    keyPrefix: k.keyPrefix,
+    expiresAt: k.expiresAt,
+    status: keyStatusFor(k),
     createdAt: k.createdAt,
     revokedAt: k.revokedAt,
   }));
+}
+
+export async function renameKey(userId: string, id: string, rawName: unknown) {
+  const name = parseKeyName(rawName);
+  const apiKey = await prisma.apiKey.findUnique({ where: { id } });
+  if (!apiKey || apiKey.userId !== userId) {
+    throw new AppError(404, "Key not found.");
+  }
+  const updated = await prisma.apiKey.update({ where: { id }, data: { name } });
+  return { id: updated.id, name: updated.name };
 }
 
 export async function revokeKey(userId: string, id: string) {
@@ -57,9 +123,15 @@ export async function revokeKey(userId: string, id: string) {
 export async function findUserByPresentedApiKey(rawKey: string) {
   const hash = createHash("sha256").update(rawKey).digest("hex");
   const apiKey = await prisma.apiKey.findFirst({
+    // Belt-and-braces alongside LiteLLM's native expiry enforcement:
+    // revoked or locally-expired keys resolve to nobody even if LiteLLM
+    // hiccups.
     where: {
-      OR: [{ litellmKeyId: hash }, { litellmKeyId: rawKey }],
-      revokedAt: null,
+      AND: [
+        { OR: [{ litellmKeyId: hash }, { litellmKeyId: rawKey }] },
+        { revokedAt: null },
+        { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      ],
     },
     select: {
       user: { select: { id: true, status: true, deletedAt: true } },

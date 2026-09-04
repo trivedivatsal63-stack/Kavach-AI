@@ -10,7 +10,7 @@ const styles: Record<Variant, string> = {
   warning:
     "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
   danger: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400",
-  info: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400",
+  info: "bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-gray-300",
 };
 
 export function Badge({

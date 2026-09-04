@@ -8,11 +8,14 @@ import { Badge } from "../components/Badge";
 import { Spinner } from "../components/Spinner";
 import { MessageThread } from "../components/chat/MessageThread";
 import { Composer } from "../components/chat/Composer";
+import { ChatIcon, DocIcon, KeyIcon, LayersIcon, XIcon } from "../components/icons";
 import { DocumentChunkBrowser } from "../components/rag/DocumentChunkBrowser";
 import { useAuth } from "../context/AuthContext";
 import { useConversation } from "../hooks/useConversation";
 import {
   ApiError,
+  KEY_EXPIRY_PRESETS,
+  expiryIsoFromDays,
   ragCreateKey,
   ragDeleteDocument,
   ragFileError,
@@ -59,9 +62,15 @@ export function RagPage() {
   const [keys, setKeys] = useState<RagKeySummary[]>([]);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [revealedMeta, setRevealedMeta] = useState<{
+    name: string;
+    expiresAt: string | null;
+  } | null>(null);
   const [copied, setCopied] = useState(false);
   const [creatingKey, setCreatingKey] = useState(false);
   const [keyName, setKeyName] = useState("");
+  const [keyExpiryDays, setKeyExpiryDays] = useState<number | null>(30);
+  const [revokeTarget, setRevokeTarget] = useState<RagKeySummary | null>(null);
 
   const [view, setView] = useState<View>("chat");
   const [pendingScopeDocId, setPendingScopeDocId] = useState("");
@@ -83,12 +92,15 @@ export function RagPage() {
     activeId,
     messages,
     sending,
+    streamPhases,
+    streamingText,
+    stopStreaming,
     error: chatError,
     selectConversation,
     startComposing,
     startNewConversation,
     deleteConversation,
-    sendMessage,
+    sendMessageStream,
   } = useConversation(token, "rag");
 
   const refresh = useCallback(async () => {
@@ -232,10 +244,10 @@ export function RagPage() {
         pendingScopeDocId ? [pendingScopeDocId] : undefined
       );
       if (!conversation) return;
-      await sendMessage(content, conversation.id, webSearch);
+      await sendMessageStream(content, conversation.id, webSearch);
       return;
     }
-    await sendMessage(content, undefined, webSearch);
+    await sendMessageStream(content, undefined, webSearch);
   }
 
   function handleNewChat() {
@@ -250,10 +262,16 @@ export function RagPage() {
     setKeyError(null);
     setCreatingKey(true);
     setRevealedKey(null);
+    setRevealedMeta(null);
     setCopied(false);
     try {
-      const created = await ragCreateKey(token, keyName.trim());
+      const created = await ragCreateKey(
+        token,
+        keyName.trim(),
+        keyExpiryDays != null ? expiryIsoFromDays(keyExpiryDays) : null
+      );
       setRevealedKey(created.key);
+      setRevealedMeta({ name: created.name, expiresAt: created.expiresAt });
       setKeyName("");
       await refresh();
     } catch (err) {
@@ -269,12 +287,21 @@ export function RagPage() {
     if (!token) return;
     try {
       await ragRevokeKey(token, id);
+      setRevokeTarget(null);
       await refresh();
     } catch (err) {
       setKeyError(
         err instanceof ApiError ? err.message : "Failed to revoke key."
       );
     }
+  }
+
+  function ragExpiryText(expiresAt: string | null): string {
+    if (!expiresAt) return "Never expires";
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (ms <= 0) return "Expired";
+    const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
+    return days === 1 ? "Expires tomorrow" : `Expires in ${days} days`;
   }
 
   async function handleCopy() {
@@ -392,26 +419,22 @@ export function RagPage() {
                     subtitle="Answers are grounded in your indexed chunks and come with citations back to the source."
                     actions={[
                       {
-                        icon: "💬",
-                        chipColor: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
+                        icon: <ChatIcon />,
                         label: "Ask your documents",
                         onClick: () => startComposing(),
                       },
                       {
-                        icon: "📄",
-                        chipColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+                        icon: <DocIcon />,
                         label: "Upload a document",
                         onClick: () => setView("documents"),
                       },
                       {
-                        icon: "🧩",
-                        chipColor: "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-400",
+                        icon: <LayersIcon />,
                         label: "Browse chunks visually",
                         onClick: () => setView("browse"),
                       },
                       {
-                        icon: "🔑",
-                        chipColor: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400",
+                        icon: <KeyIcon />,
                         label: "Get a RAG API key",
                         onClick: () => setView("documents"),
                       },
@@ -421,6 +444,9 @@ export function RagPage() {
                   <MessageThread
                     messages={messages}
                     sending={sending}
+                    streamPhases={streamPhases}
+                    streamingText={streamingText}
+                    onRetry={(c) => void sendMessageStream(c, activeId ?? undefined, webSearch)}
                     emptyTitle="Ask your documents"
                     emptyBody="Answers are grounded in your indexed chunks and come with citations back to the source."
                   />
@@ -431,6 +457,8 @@ export function RagPage() {
                   onChange={setDraft}
                   onSubmit={() => void handleSend()}
                   disabled={sending}
+                  streaming={sending}
+                  onStop={stopStreaming}
                   placeholder="e.g. What does the doc say about pricing?"
                   webSearch={webSearch}
                   onToggleWebSearch={() => setWebSearch((v) => !v)}
@@ -465,8 +493,8 @@ export function RagPage() {
                       onDrop={handleDrop}
                       className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-colors ${
                         dragActive
-                          ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
-                          : "border-gray-300 bg-white hover:border-indigo-400 dark:border-neutral-700 dark:bg-neutral-900"
+                          ? "border-gray-500 bg-gray-50 dark:bg-neutral-800"
+                          : "border-gray-300 bg-white hover:border-gray-400 dark:border-neutral-700 dark:bg-neutral-900"
                       }`}
                     >
                       <input
@@ -482,7 +510,7 @@ export function RagPage() {
                       />
                       <p className="text-sm font-medium">
                         Drop files here or{" "}
-                        <span className="text-indigo-600 dark:text-indigo-400">
+                        <span className="underline decoration-gray-300 underline-offset-2">
                           browse
                         </span>
                       </p>
@@ -534,7 +562,7 @@ export function RagPage() {
                                       className="btn-ghost"
                                       aria-label={`Remove ${u.file.name}`}
                                     >
-                                      ✕
+                                      <XIcon className="h-4 w-4" />
                                     </button>
                                   )}
                                 </div>
@@ -542,7 +570,7 @@ export function RagPage() {
                               {u.status === "uploading" && (
                                 <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-neutral-800">
                                   <div
-                                    className="h-full rounded-full bg-indigo-500 transition-all"
+                                    className="h-full rounded-full bg-gray-900 transition-all dark:bg-white"
                                     style={{ width: `${u.progress}%` }}
                                   />
                                 </div>
@@ -631,26 +659,50 @@ export function RagPage() {
 
                       <form
                         onSubmit={(e) => void handleCreateKey(e)}
-                        className="flex gap-2"
+                        className="space-y-2"
                       >
-                        <input
-                          value={keyName}
-                          onChange={(e) => setKeyName(e.target.value)}
-                          placeholder="Key name (e.g. my-app)"
-                          className="input flex-1"
-                        />
-                        <button
-                          type="submit"
-                          disabled={creatingKey || !keyName.trim()}
-                          className="btn-primary"
-                        >
-                          {creatingKey ? "Creating…" : "Create key"}
-                        </button>
+                        <div className="flex gap-2">
+                          <input
+                            value={keyName}
+                            onChange={(e) => setKeyName(e.target.value.slice(0, 60))}
+                            placeholder="Key name (e.g. my-app)"
+                            className="input flex-1"
+                          />
+                          <button
+                            type="submit"
+                            disabled={creatingKey || !keyName.trim()}
+                            className="btn-primary"
+                          >
+                            {creatingKey ? "Creating…" : "Create key"}
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {KEY_EXPIRY_PRESETS.map((p) => (
+                            <button
+                              key={p.label}
+                              type="button"
+                              onClick={() => setKeyExpiryDays(p.days)}
+                              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                                keyExpiryDays === p.days
+                                  ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
+                                  : "border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-neutral-700 dark:text-gray-300 dark:hover:bg-neutral-800"
+                              }`}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
                       </form>
 
                       {revealedKey && (
                         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
                           <p className="text-sm font-medium">
+                            {revealedMeta?.name}
+                            {revealedMeta?.expiresAt
+                              ? ` · expires ${new Date(revealedMeta.expiresAt).toLocaleDateString()}`
+                              : " · never expires"}
+                          </p>
+                          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                             Copy this key now — it&apos;s only shown once.
                           </p>
                           <div className="mt-2 flex items-center gap-2">
@@ -659,6 +711,15 @@ export function RagPage() {
                             </code>
                             <button onClick={handleCopy} className="btn-secondary">
                               {copied ? "Copied" : "Copy"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRevealedKey(null);
+                                setRevealedMeta(null);
+                              }}
+                              className="btn-ghost"
+                            >
+                              Dismiss
                             </button>
                           </div>
                         </div>
@@ -673,30 +734,74 @@ export function RagPage() {
                         {keys.map((k) => (
                           <li
                             key={k.id}
-                            className="flex items-center justify-between py-3"
+                            className="flex items-center justify-between gap-3 py-3"
                           >
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium">
                                 {k.name}
                               </p>
+                              <p className="truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+                                {k.keyPrefix}
+                              </p>
                               <p className="text-xs text-gray-400 dark:text-gray-500">
                                 ${k.spend.toFixed(4)} spent ·{" "}
-                                {new Date(k.createdAt).toLocaleDateString()}
+                                {new Date(k.createdAt).toLocaleDateString()} ·{" "}
+                                {ragExpiryText(k.expiresAt)}
                               </p>
                             </div>
-                            {!k.revokedAt ? (
-                              <button
-                                onClick={() => void handleRevoke(k.id)}
-                                className="btn-danger"
-                              >
-                                Revoke
-                              </button>
+                            {k.status === "active" || k.status === "expiring-soon" ? (
+                              <div className="flex shrink-0 items-center gap-2">
+                                {k.status === "expiring-soon" && (
+                                  <Badge variant="warning">Expiring soon</Badge>
+                                )}
+                                <button
+                                  onClick={() => setRevokeTarget(k)}
+                                  className="btn-danger"
+                                >
+                                  Revoke
+                                </button>
+                              </div>
                             ) : (
-                              <Badge variant="danger">Revoked</Badge>
+                              <Badge variant="danger">
+                                {k.status === "expired" ? "Expired" : "Revoked"}
+                              </Badge>
                             )}
                           </li>
                         ))}
                       </ul>
+                      {revokeTarget && (
+                        <div
+                          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                          onClick={() => setRevokeTarget(null)}
+                        >
+                          <div
+                            className="card w-full max-w-sm p-6"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <h2 className="text-base font-semibold">Revoke key?</h2>
+                            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                              <span className="font-medium text-gray-900 dark:text-gray-100">
+                                {revokeTarget.name}
+                              </span>{" "}
+                              will stop working immediately. This cannot be undone.
+                            </p>
+                            <div className="mt-6 flex justify-end gap-2">
+                              <button
+                                onClick={() => setRevokeTarget(null)}
+                                className="btn-secondary"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => void handleRevoke(revokeTarget.id)}
+                                className="btn-danger px-4 py-2"
+                              >
+                                Revoke key
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

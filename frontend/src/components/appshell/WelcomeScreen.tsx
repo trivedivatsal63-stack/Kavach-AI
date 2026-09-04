@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 
 export interface QuickAction {
   icon: ReactNode;
-  chipColor: string;
   label: string;
   onClick: () => void;
 }
@@ -38,9 +37,7 @@ export function WelcomeScreen({
             className="flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700"
           >
             <span className="flex items-center gap-3">
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-base ${action.chipColor}`}
-              >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-gray-700 dark:text-gray-200 [&>svg]:h-5 [&>svg]:w-5">
                 {action.icon}
               </span>
               <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">

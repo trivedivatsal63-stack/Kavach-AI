@@ -1,4 +1,5 @@
 import type { ConversationSummary } from "../../lib/api";
+import { XIcon } from "../icons";
 
 // Right panel — "Conversations", not "Projects" (no project concept exists
 // in Kavach). Same component, same useConversation-backed data, for both
@@ -76,7 +77,7 @@ export function AppRightPanel({
                 aria-label={`Delete ${c.title}`}
                 className="shrink-0 rounded p-1 text-gray-300 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-gray-200 hover:text-red-600 dark:hover:bg-neutral-700 dark:hover:text-red-400"
               >
-                ✕
+                <XIcon className="h-3.5 w-3.5" />
               </button>
             </div>
           </li>

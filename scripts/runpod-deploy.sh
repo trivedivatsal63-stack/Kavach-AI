@@ -112,6 +112,35 @@ export DATABASE_URL LITELLM_DATABASE_URL LITELLM_BASE_URL VLLM_BASE_URL
 export FRONTEND_URL BACKEND_URL LITELLM_URL
 export HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
 
+# backend/.env is what node actually reads (dotenv loads CWD/backend/.env).
+# Single source of truth lives in the root .env — see sync-backend-env.sh.
+echo "==> Syncing backend/.env from root .env"
+"${REPO_ROOT}/scripts/sync-backend-env.sh"
+
+# Unset backend-file-owned keys before launching supervisord. Rationale
+# (verified live): `set -a; source .env` exports EVERYTHING including empty
+# values, the supervisord daemon inherits them, every child inherits the
+# daemon's env, and dotenv never overrides already-set vars. So a
+# `supervisorctl restart backend` after a root .env edit silently kept the
+# OLD values (e.g. blank SMTP_* killed all OTP email with no error).
+# Unsetting these (none are referenced by any program's environment= line —
+# only service URLs and DB/master credentials stay in daemon env) makes
+# backend/.env the sole source: `restart backend` always picks up the file.
+# Rule: DB URLs / master key / VLLM model changes still need a daemon
+# restart or full re-deploy; everything else is sync + `restart backend`.
+# NOTE: EMBEDDING_MODEL/DIM stay exported — embedding/app/main.py reads them
+# from daemon env (no dotenv there). Everything unset below is consumed only
+# by the backend node process via backend/.env.
+unset JWT_SECRET CHAT_MODEL RAG_CHAT_MODEL MODEL_MAX_CONTEXT_TOKENS
+unset SUPERADMIN_EMAIL CORS_ORIGIN
+unset SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASS SMTP_FROM SMTP_TLS_INSECURE
+
+# Fail fast if setup never initialized the cluster (wrong order).
+if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
+  echo "ERROR: Postgres cluster not initialized — run ./scripts/runpod-setup.sh first."
+  exit 1
+fi
+
 # Sync Postgres role password to match .env (setup may have run before secrets existed)
 if [[ -x /workspace/bin/pg_bin/psql ]]; then
   echo "==> Syncing Postgres role password"
@@ -193,6 +222,22 @@ if (( FAILED != 0 )); then
   echo "  supervisorctl -c ${SUPERVISORD_CONF} status"
   echo "  supervisorctl -c ${SUPERVISORD_CONF} tail <service>"
   exit 1
+fi
+
+# Snapshot Postgres to the volume (survives stop/resume/recreate). Keeps the
+# last 5 timestamped dumps + latest.sql, which runpod-setup.sh auto-restores
+# on a fresh container disk. Always run scripts/backup-runpod.sh before
+# stopping the pod — this deploy-time snapshot is a safety net, not a
+# substitute (a crash between deploy and Stop would otherwise lose data).
+echo "==> Backing up Postgres to /workspace/backups"
+mkdir -p /workspace/backups
+BACKUP_TS="$(date +%Y%m%d-%H%M%S)"
+if runuser -u postgres -- /workspace/bin/pg_bin/pg_dumpall -f "/workspace/backups/pg-${BACKUP_TS}.sql"; then
+  cp -f "/workspace/backups/pg-${BACKUP_TS}.sql" /workspace/backups/latest.sql
+  ls -t /workspace/backups/pg-*.sql 2>/dev/null | tail -n +6 | xargs -r rm -f
+  echo "    backup saved (latest.sql refreshed)"
+else
+  echo "    WARNING: Postgres backup failed — run scripts/backup-runpod.sh manually before stopping the pod."
 fi
 
 echo

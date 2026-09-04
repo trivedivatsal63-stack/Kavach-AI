@@ -3,17 +3,24 @@ import { Link, useNavigate } from "react-router-dom";
 import { ShieldMark } from "../ShieldMark";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
+import {
+  ChatIcon,
+  DocIcon,
+  FolderIcon,
+  GlobeIcon,
+  ChartIcon,
+  ShieldIcon,
+  LibraryIcon,
+} from "../icons";
 
 function NavItem({
   active,
-  chip,
-  chipColor,
+  icon,
   label,
   onClick,
 }: {
   active: boolean;
-  chip: ReactNode;
-  chipColor: string;
+  icon: ReactNode;
   label: string;
   onClick: () => void;
 }) {
@@ -26,22 +33,18 @@ function NavItem({
           : "text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-neutral-800/60"
       }`}
     >
-      <span
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm ${chipColor}`}
-      >
-        {chip}
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center [&>svg]:h-5 [&>svg]:w-5">
+        {icon}
       </span>
       {label}
     </button>
   );
 }
 
-// Shared left rail for /chat and /rag — matches a reference layout the user
-// provided (3-column app shell), deliberately in its own black/white style
-// rather than the rest of the site's indigo accent (confirmed
-// intentional). Only real Kavach destinations are represented here —
-// "Templates"/"Community" from the reference have no equivalent and were
-// dropped rather than faked.
+// Shared left rail for /chat and /rag — monochrome ChatGPT-style rail.
+// Only real Kavach destinations are represented here — "Templates"/
+// "Community" from the reference have no equivalent and were dropped
+// rather than faked.
 export function AppSidebar({
   mode,
   search,
@@ -91,29 +94,25 @@ export function AppSidebar({
       <nav className="flex flex-col gap-0.5 px-3">
         <NavItem
           active={mode === "chat"}
-          chip="💬"
-          chipColor="bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+          icon={<ChatIcon />}
           label="Chat"
           onClick={() => navigate("/chat")}
         />
         <NavItem
           active={mode === "rag"}
-          chip="📄"
-          chipColor="bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+          icon={<DocIcon />}
           label="RAG Studio"
           onClick={() => navigate("/rag")}
         />
         <NavItem
           active={false}
-          chip="📁"
-          chipColor="bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-400"
+          icon={<FolderIcon />}
           label="Documents"
           onClick={() => navigate("/rag?view=documents")}
         />
         <NavItem
           active={false}
-          chip="🌐"
-          chipColor="bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-400"
+          icon={<GlobeIcon />}
           label="Live Search"
           onClick={onLiveSearchShortcut}
         />
@@ -125,24 +124,21 @@ export function AppSidebar({
         </p>
         <NavItem
           active={false}
-          chip="📊"
-          chipColor="bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-gray-300"
+          icon={<ChartIcon />}
           label="Dashboard"
           onClick={() => navigate("/dashboard")}
         />
         {user?.role === "superadmin" && (
           <NavItem
             active={false}
-            chip="🛡️"
-            chipColor="bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400"
+            icon={<ShieldIcon />}
             label="Admin"
             onClick={() => navigate("/admin")}
           />
         )}
         <NavItem
           active={false}
-          chip="📚"
-          chipColor="bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-gray-300"
+          icon={<LibraryIcon />}
           label="Docs"
           onClick={() => navigate("/docs")}
         />

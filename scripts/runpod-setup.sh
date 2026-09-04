@@ -13,7 +13,7 @@ if [[ "${REPO_ROOT}" != "${EXPECTED_REPO}" ]]; then
 fi
 
 LOG_DIR="${REPO_ROOT}/logs"
-mkdir -p /workspace/venvs /workspace/bin /workspace/qdrant/storage /workspace/.hf-cache "${LOG_DIR}"
+mkdir -p /workspace/venvs /workspace/bin /workspace/qdrant/storage /workspace/.hf-cache /workspace/backups "${LOG_DIR}"
 
 echo "==> [1/10] System packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -33,36 +33,46 @@ if ! command -v node >/dev/null 2>&1 || ! node -v | grep -qE '^v(2[0-9]|[3-9][0-
 fi
 echo "    node $(node -v) / npm $(npm -v)"
 
-echo "==> [2/10] Postgres cluster under /var/lib/postgresql/pgdata"
+echo "==> [2/10] Postgres cluster (live on container disk + dump/restore to volume)"
 PG_VERSION="$(ls /usr/lib/postgresql | sort -V | tail -n1)"
 PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
+# Live data dir MUST be on container disk: /workspace is a FUSE network mount
+# (user_id=0, no chown support — verified live: chown to postgres fails with
+# EPERM), and Postgres refuses to initdb/run on a directory it doesn't own.
+# Stop-safety comes from dumps in /workspace/backups (which DO survive
+# stop/resume): fresh clusters auto-restore from latest.sql below, and every
+# deploy + scripts/backup-runpod.sh refresh the dump. Qdrant/HF-cache/venvs
+# need no chown, so they stay directly on /workspace.
+PGDATA="/var/lib/postgresql/pgdata"
+FRESH_INIT=0
 ln -sfn "${PG_BIN}" /workspace/bin/pg_bin
-echo "    PostgreSQL ${PG_VERSION} → /workspace/bin/pg_bin"
+echo "    PostgreSQL ${PG_VERSION} → /workspace/bin/pg_bin (data: ${PGDATA})"
 
-if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
-  mkdir -p /var/lib/postgresql/pgdata
-  chown -R postgres:postgres /var/lib/postgresql/pgdata
-  su postgres -c "${PG_BIN}/initdb -D /var/lib/postgresql/pgdata --auth-local=peer --auth-host=scram-sha-256"
+if [[ ! -f "${PGDATA}/PG_VERSION" ]]; then
+  FRESH_INIT=1
+  mkdir -p "${PGDATA}"
+  chown -R postgres:postgres "${PGDATA}"
+  su postgres -c "${PG_BIN}/initdb -D ${PGDATA} --auth-local=peer --auth-host=scram-sha-256"
   # Allow password auth from localhost (backend / litellm)
   {
     echo "listen_addresses = '127.0.0.1'"
     echo "port = 5432"
     echo "unix_socket_directories = '/var/run/postgresql'"
-  } >> /var/lib/postgresql/pgdata/postgresql.conf
+  } >> "${PGDATA}/postgresql.conf"
   # Ensure scram for TCP localhost
-  if ! grep -qE '^host\s+all\s+all\s+127\.0\.0\.1/32' /var/lib/postgresql/pgdata/pg_hba.conf; then
-    echo "host all all 127.0.0.1/32 scram-sha-256" >> /var/lib/postgresql/pgdata/pg_hba.conf
+  if ! grep -qE '^host\s+all\s+all\s+127\.0\.0\.1/32' "${PGDATA}/pg_hba.conf"; then
+    echo "host all all 127.0.0.1/32 scram-sha-256" >> "${PGDATA}/pg_hba.conf"
   fi
 fi
-chown -R postgres:postgres /var/lib/postgresql/pgdata
+chown -R postgres:postgres "${PGDATA}"
 mkdir -p /var/run/postgresql
 chown postgres:postgres /var/run/postgresql
 
 # One-time cluster + databases (password synced later by runpod-deploy.sh
 # once .env secrets exist — setup often runs before .env is filled).
-if [[ ! -f /var/lib/postgresql/pgdata/.kavach_initialized ]]; then
+if [[ ! -f "${PGDATA}/.kavach_initialized" ]]; then
   echo "    Creating databases (litellm, dashboard) via peer auth…"
-  su postgres -c "${PG_BIN}/pg_ctl -D /var/lib/postgresql/pgdata -l ${LOG_DIR}/postgres-init.log start"
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} -l ${LOG_DIR}/postgres-init.log start"
   sleep 2
 
   su postgres -c "${PG_BIN}/psql -d postgres -v ON_ERROR_STOP=1" <<'EOSQL'
@@ -72,11 +82,25 @@ SELECT 'CREATE DATABASE dashboard OWNER postgres'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dashboard')\gexec
 EOSQL
 
-  su postgres -c "${PG_BIN}/pg_ctl -D /var/lib/postgresql/pgdata stop"
-  touch /var/lib/postgresql/pgdata/.kavach_initialized
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} stop"
+  touch "${PGDATA}/.kavach_initialized"
   echo "    Postgres databases ready (password will be set on deploy)."
 else
   echo "    Postgres already initialized (skipping)."
+fi
+
+# Fresh container disk + volume backup present = this pod was resumed or
+# recreated: restore user data (users, keys, docs metadata, LiteLLM spend)
+# over the empty databases created above.
+if [[ "${FRESH_INIT}" == "1" && -f /workspace/backups/latest.sql ]]; then
+  echo "    Restoring Postgres from /workspace/backups/latest.sql…"
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} -l ${LOG_DIR}/postgres-restore.log start"
+  sleep 2
+  su postgres -c "${PG_BIN}/psql -d postgres -c 'DROP DATABASE IF EXISTS litellm;'"
+  su postgres -c "${PG_BIN}/psql -d postgres -c 'DROP DATABASE IF EXISTS dashboard;'"
+  su postgres -c "${PG_BIN}/psql -d postgres -v ON_ERROR_STOP=1 -f /workspace/backups/latest.sql"
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} stop"
+  echo "    Restore complete."
 fi
 
 echo "==> [3/10] vLLM venv"
@@ -84,7 +108,20 @@ if [[ ! -x /workspace/venvs/vllm/bin/pip ]]; then
   python3 -m venv /workspace/venvs/vllm
 fi
 /workspace/venvs/vllm/bin/pip install --upgrade pip
+# Muse Glimmer needs nightly (muse_glimmer model + parsers, PR 51655).
+# Stable PyPI does not include them, and nightly version numbers can sort
+# *below* stable — so install deps from PyPI, then replace the package with
+# the pinned nightly wheel (no-deps).
+VLLM_NIGHTLY_COMMIT="${VLLM_NIGHTLY_COMMIT:-9c8e90eb2637a863ca14e47fd436b10ed7ba6536}"
+VLLM_NIGHTLY_WHL="${VLLM_NIGHTLY_WHL:-vllm-0.26.1rc1.dev1191+g9c8e90eb2-cp38-abi3-manylinux_2_28_x86_64.whl}"
+mkdir -p /workspace/tmp
+if [[ ! -f "/workspace/tmp/${VLLM_NIGHTLY_WHL}" ]]; then
+  curl -fsSL -o "/workspace/tmp/${VLLM_NIGHTLY_WHL}" \
+    "https://wheels.vllm.ai/${VLLM_NIGHTLY_COMMIT}/${VLLM_NIGHTLY_WHL//+/%2B}"
+fi
 /workspace/venvs/vllm/bin/pip install vllm
+/workspace/venvs/vllm/bin/pip uninstall -y vllm
+/workspace/venvs/vllm/bin/pip install --no-deps "/workspace/tmp/${VLLM_NIGHTLY_WHL}"
 
 echo "==> [4/10] LiteLLM venv"
 if [[ ! -x /workspace/venvs/litellm/bin/pip ]]; then
@@ -92,6 +129,22 @@ if [[ ! -x /workspace/venvs/litellm/bin/pip ]]; then
 fi
 /workspace/venvs/litellm/bin/pip install --upgrade pip
 /workspace/venvs/litellm/bin/pip install 'litellm[proxy]'
+# The DB-backed proxy needs the prisma client package AND its generated
+# query-engine binaries at startup. The [proxy] extra reliably provides
+# neither — without the package, litellm crash-loops with
+# "ModuleNotFoundError: No module named 'prisma'"; without generate, with
+# "Unable to find Prisma binaries. Please run 'prisma generate' first."
+# (both confirmed live). The schema ships inside the litellm wheel.
+/workspace/venvs/litellm/bin/pip install 'prisma>=0.11'
+LITELLM_SCHEMA="$(find /workspace/venvs/litellm/lib -name schema.prisma -path '*litellm*' 2>/dev/null | head -n1)"
+if [[ -n "${LITELLM_SCHEMA}" ]]; then
+  # The prisma CLI spawns the prisma-client-py generator via PATH lookup,
+  # so the venv bin must be on PATH (absolute-path invocation alone fails
+  # with "prisma-client-py: not found" — confirmed live).
+  PATH="/workspace/venvs/litellm/bin:${PATH}" /workspace/venvs/litellm/bin/prisma generate --schema "${LITELLM_SCHEMA}"
+else
+  echo "    WARNING: litellm schema.prisma not found — proxy DB startup will fail."
+fi
 
 echo "==> [5/10] Embedding venv"
 if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
@@ -99,14 +152,15 @@ if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
 fi
 /workspace/venvs/embedding/bin/pip install --upgrade pip
 /workspace/venvs/embedding/bin/pip install -r "${REPO_ROOT}/embedding/requirements.txt"
-# fastembed pulls in the CPU-only onnxruntime as a transitive dependency;
-# it does NOT get replaced by the onnxruntime-gpu install above (confirmed
-# live: both ended up co-installed, and whichever wins the shared
-# `onnxruntime` import namespace determined the available providers --
-# here it silently fell back to CPU-only, with no error, just a slow
-# 250%-CPU embedding service instead of using the GPU that was sitting
-# idle). Force onnxruntime-gpu to be the only one present.
-/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime 2>/dev/null || true
+# fastembed pulls in the CPU-only onnxruntime as a transitive dependency.
+# Both dists install into the same top-level `onnxruntime/` directory, so
+# merely uninstalling the CPU dist afterwards GUTS the shared install
+# (confirmed live: `import onnxruntime` succeeds but has no SessionOptions,
+# crash-looping the embedding service). Wipe both and install ONLY the GPU
+# build, then fail fast if the module is still broken.
+/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null || true
+/workspace/venvs/embedding/bin/pip install 'onnxruntime-gpu>=1.21,<1.27'
+/workspace/venvs/embedding/bin/python -c "import onnxruntime as o; assert hasattr(o, 'SessionOptions'), 'broken onnxruntime install'; print('    onnxruntime', o.__version__, 'OK')"
 
 echo "==> [6/10] Qdrant binary"
 QDRANT_BIN="/workspace/qdrant/qdrant"
@@ -142,6 +196,10 @@ fi
 # pull in searx's own runtime deps (confirmed live -- flask itself ended up
 # missing entirely, not just one stray package).
 /workspace/venvs/searxng/bin/pip install -r /workspace/searxng-src/requirements.txt
+# --no-build-isolation below needs the PEP 517 backend importable inside the
+# venv (Ubuntu 24.04 venvs ship pip without setuptools, so the editable
+# install fails with "Cannot import 'setuptools.build_meta'").
+/workspace/venvs/searxng/bin/pip install setuptools wheel
 /workspace/venvs/searxng/bin/pip install --use-pep517 --no-build-isolation -e /workspace/searxng-src
 # Optional uwsgi for production-style serving; supervisord uses searx.webapp
 # (simpler under process supervision). Install so both paths are available.
@@ -167,7 +225,11 @@ echo "==> [10/10] supervisord config"
 # apt supervisor looks under /etc/supervisor; we always launch with -c explicitly.
 chmod +x "${REPO_ROOT}/scripts/runpod-setup.sh" \
          "${REPO_ROOT}/scripts/runpod-deploy.sh" \
-         "${REPO_ROOT}/scripts/runpod-start-vllm.sh" 2>/dev/null || true
+         "${REPO_ROOT}/scripts/runpod-start-vllm.sh" \
+         "${REPO_ROOT}/scripts/runpod-start-postgres.sh" \
+         "${REPO_ROOT}/scripts/runpod-start.sh" \
+         "${REPO_ROOT}/scripts/backup-runpod.sh" \
+         "${REPO_ROOT}/scripts/sync-backend-env.sh" 2>/dev/null || true
 
 echo
 echo "Setup complete."

@@ -1,8 +1,12 @@
 import { retrieve } from "./retrieval.service";
-import { completeChat } from "./completion.service";
+import { completeChat, completeChatStream } from "./completion.service";
+import type { PhaseCallback } from "../pipelinePhases";
 import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./tokenizer.service";
 import { formatContext } from "./citationFormat";
 import { getLiveSearchContext } from "../liveSearch/liveSearch.service";
+import { decideSearchNeed, inferDomain, type SearchDomain } from "../liveSearch/searchDecision.service";
+import { runAgentLoop } from "../agent/agentLoop.service";
+import type { ToolChatMessage } from "./completion.service";
 import { formatWebContext } from "../liveSearch/webCitationFormat";
 import { RAG_HISTORY_TOKEN_BUDGET } from "../../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG } from "../../utils/liveSearch.constants";
@@ -38,6 +42,9 @@ const SYSTEM_PROMPT =
   "Citation and reference entries (footnotes, bibliographies, publisher names, " +
   "journal details) are NOT answers: never present a publisher or a reference " +
   "string as the author or title of a document. " +
+  "Answer only the latest question, on its own terms — never repeat, quote, " +
+  "or open with a previous turn's refusal, apology, or wording, even when " +
+  "the topic looks similar. Each answer starts fresh. " +
   "Cite your sources with [n] matching the numbered context. Keep the answer " +
   "concise.";
 
@@ -51,9 +58,10 @@ const WEB_SEARCH_ADDENDUM =
   "fetched just for this question, extracted to concise text. " +
   "Rules: use ONLY facts explicitly in [n] excerpts for web-sourced claims; " +
   "cite with [n] per factual sentence (e.g. '... [2]'). " +
-  "If excerpts don't contain the answer, say so — don't guess from training " +
-  "data. Keep document and web facts distinct — don't blend them as one " +
-  "source. If documents alone answer, ignore web results.";
+  "If excerpts don't contain the answer, say exactly that and stop — don't " +
+  "guess from training data and don't restate any previous turn. Keep " +
+  "document and web facts distinct — don't blend them as one source. If " +
+  "documents alone answer, ignore web results.";
 
 // Cached for the process lifetime, not hardcoded — if SYSTEM_PROMPT's wording
 // ever changes, the next process restart re-measures it automatically rather
@@ -86,12 +94,44 @@ export async function answerQuestion(input: {
    * question. Optional — omitted/empty for the public /v1/rag/query API,
    * which has no conversation concept. */
   history?: HistoryTurn[];
-  /** Explicit opt-in only — never triggered automatically. See
-   * services/liveSearch/ for why: this model is too small to reliably
-   * decide on its own when it needs current information. */
-  webSearch?: boolean;
+  /** true = always search with the raw question. 'auto' = model decides IF
+   * search is needed + rewrites the query from history. false = never. */
+  webSearch?: boolean | "auto";
+  /** Real-step progress callback for the SSE status timeline. */
+  onPhase?: PhaseCallback;
+  /** Token deltas for live streaming (with signal, streams via LiteLLM SSE). */
+  onToken?: (delta: string) => void;
+  signal?: AbortSignal;
+  /** Agentic tool loop (Phase B): the model drives web lookups through
+   * web_search/fetch_page tools; document retrieval below always runs. */
+  agentic?: boolean;
 }): Promise<RagChatResult> {
-  const webSearch = input.webSearch ?? false;
+  const mode = input.webSearch ?? "auto";
+
+  let searchQuery: string | null = null;
+  let domain: SearchDomain = inferDomain(input.question);
+  let routerYes = mode === true;
+  if (mode === true) {
+    searchQuery = input.question;
+  } else if (mode === "auto") {
+    await input.onPhase?.("routing");
+    const decision = await decideSearchNeed({
+      apiKey: input.apiKey,
+      question: input.question,
+      history: input.history ?? [],
+    });
+    if (decision.needSearch && decision.rewrittenQuery) {
+      searchQuery = decision.rewrittenQuery;
+      domain = decision.domain === "none" ? domain : decision.domain;
+      routerYes = true;
+    } else {
+      domain = "none";
+    }
+  }
+  // In agentic mode the loop owns web fetching; the pre-fetch below is
+  // skipped so one question never pays for two searches.
+  const willLoop = input.agentic === true && routerYes;
+  let webSearch = searchQuery !== null && !willLoop;
 
   // What retrieve()'s token-budget cutoff needs to know: how many tokens
   // this call's prompt scaffolding already commits, before any chunk content
@@ -100,7 +140,9 @@ export async function answerQuestion(input: {
   // History gets its own small, fixed budget (RAG_HISTORY_TOKEN_BUDGET) —
   // retrieved chunks are the primary value here and must not get starved
   // out of the 2048-token window by a long conversation.
-  const systemTokens = await getSystemPromptTokenCount(webSearch);
+  // willLoop assumes web context (addendum-priced) up front; a declined
+  // loop that also finds nothing exits via refusal without an LLM call.
+  const systemTokens = await getSystemPromptTokenCount(webSearch || willLoop);
   const wrapperTokens = await countTokens(`Context:\n\n\nQuestion:\n${input.question}`);
   const trimmedHistory = await trimHistoryToTokenBudget(
     input.history ?? [],
@@ -114,23 +156,87 @@ export async function answerQuestion(input: {
   // token cost can be folded into reservedTokens up front — retrieve()'s own
   // budget walk needs to know everything already spoken for, not just
   // history/system/question, or it could still overflow the window.
-  const webCitations = webSearch
-    ? await getLiveSearchContext({
-        query: input.question,
-        budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
-      })
-    : [];
+  // searchQuery is the rewritten form when mode='auto', raw when forced.
+  // Skipped entirely when the loop owns web fetching (no double search).
+  if (searchQuery && !willLoop) await input.onPhase?.("searching");
+  let webCitations =
+    searchQuery && !willLoop
+      ? await getLiveSearchContext({
+          query: searchQuery,
+          budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+          domain,
+        })
+      : [];
   const webContextTokens =
     webCitations.length > 0 ? await countTokens(formatWebContext(webCitations)) : 0;
 
-  const reservedTokens = systemTokens + wrapperTokens + historyTokens + webContextTokens;
+  const reservedTokens =
+    systemTokens +
+    wrapperTokens +
+    historyTokens +
+    (willLoop ? LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG : webContextTokens);
 
+  await input.onPhase?.("retrieving");
   const citations: Citation[] = await retrieve({
     userId: input.userId,
     query: input.question,
     documentIds: input.documentIds,
     reservedTokens,
   });
+
+  // Agentic attempt: document context is injected up front with stable
+  // numbering; the model pulls web facts through tools numbered after it.
+  // A declined lookup falls back to the forced fetch below, preserving
+  // today's auto behavior exactly (never a silent downgrade).
+  if (willLoop && searchQuery) {
+    const docContext = citations.length > 0 ? formatContext(citations) : "";
+    const webStart = citations.length + 1;
+    const loopMessages: ToolChatMessage[] = [
+      {
+        role: "system",
+        content:
+          SYSTEM_PROMPT +
+          " You have web_search and fetch_page tools for live external facts — " +
+          "use them when the question needs anything beyond these document chunks. " +
+          "Cite document facts with their [n] numbers; cite tool facts per sentence " +
+          `with [n] continuing after the documents (web numbering starts at [${webStart}]). ` +
+          "If neither source supports an answer, say so plainly and stop.",
+      },
+      ...trimmedHistory,
+      {
+        role: "user",
+        content: `Context:\n${docContext}\n\nQuestion:\n${input.question}`,
+      },
+    ];
+    const loop = await runAgentLoop({
+      apiKey: input.apiKey,
+      messages: loopMessages,
+      webBudgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+      webCitationStartIndex: citations.length,
+      onPhase: input.onPhase,
+      signal: input.signal,
+    });
+    if (loop.toolCallsMade > 0) {
+      input.onToken?.(loop.content);
+      return {
+        answer: loop.content,
+        citations,
+        webCitations: loop.webCitations,
+        usage: {
+          promptTokens: loop.promptTokens,
+          completionTokens: loop.completionTokens,
+          totalTokens: loop.totalTokens,
+        },
+      };
+    }
+    await input.onPhase?.("searching");
+    webCitations = await getLiveSearchContext({
+      query: searchQuery,
+      budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+      domain,
+    });
+    webSearch = true;
+  }
 
   if (citations.length === 0 && webCitations.length === 0) {
     return {
@@ -150,7 +256,22 @@ export async function answerQuestion(input: {
     webCitations.length > 0 ? formatWebContext(webCitations, citations.length) : "";
   const context = [docContext, webContext].filter(Boolean).join("\n\n");
 
-  const completion = await completeChat(input.apiKey, [
+  await input.onPhase?.("generating");
+  const completion =
+    input.onToken || input.signal
+      ? await completeChatStream(
+          input.apiKey,
+          [
+            {
+              role: "system",
+              content: webSearch ? SYSTEM_PROMPT + WEB_SEARCH_ADDENDUM : SYSTEM_PROMPT,
+            },
+            ...trimmedHistory,
+            { role: "user", content: `Context:\n${context}\n\nQuestion:\n${input.question}` },
+          ],
+          { onDelta: input.onToken, signal: input.signal }
+        )
+      : await completeChat(input.apiKey, [
     {
       role: "system",
       content: webSearch ? SYSTEM_PROMPT + WEB_SEARCH_ADDENDUM : SYSTEM_PROMPT,

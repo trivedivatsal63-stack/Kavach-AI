@@ -1,10 +1,14 @@
-import { completeChat, type ChatMessage } from "./rag/completion.service";
+import { completeChat, completeChatStream, type ChatMessage } from "./rag/completion.service";
 import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./rag/tokenizer.service";
 import { getLiveSearchContext } from "./liveSearch/liveSearch.service";
+import { decideSearchNeed, inferDomain, type SearchDomain } from "./liveSearch/searchDecision.service";
 import { formatWebContext } from "./liveSearch/webCitationFormat";
 import type { WebCitation } from "./liveSearch/types";
 import { CHAT_HISTORY_TOKEN_BUDGET } from "../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constants";
+import type { PhaseCallback } from "./pipelinePhases";
+import { runAgentLoop } from "./agent/agentLoop.service";
+import type { ToolChatMessage } from "./rag/completion.service";
 
 // General-purpose (non-RAG) conversational chat — no retrieval, no document
 // grounding, just a normal multi-turn conversation against the model. Spend
@@ -15,7 +19,10 @@ import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constan
 const SYSTEM_PROMPT =
   "You are HarrierKavach AI's assistant — a helpful, direct conversational AI. " +
   "Answer clearly and concisely. If you don't know something or are unsure, " +
-  "say so rather than guessing.";
+  "say so rather than guessing. " +
+  "Answer only the latest question, on its own terms — never repeat, quote, " +
+  "or open with a previous turn's refusal, apology, or wording, even when " +
+  "the topic looks similar. Each answer starts fresh.";
 
 export interface ChatResult {
   answer: string;
@@ -33,19 +40,88 @@ export async function answerChatMessage(input: {
   question: string;
   /** Prior turns, oldest-first, excluding the new question. */
   history: HistoryTurn[];
-  /** Explicit opt-in only — never triggered automatically. See
-   * services/liveSearch/ for why: this model is too small to reliably
-   * decide on its own when it needs current information. */
-  webSearch?: boolean;
+  /** true = always search with the raw question.
+   *  'auto' (or undefined on conversational paths) = model decides IF
+   *  search is needed and rewrites the query from history. false = never. */
+  webSearch?: boolean | "auto";
+  /** Real-step progress callback for the SSE status timeline. Each phase
+   * fires exactly when that work starts — never synthetic. */
+  onPhase?: PhaseCallback;
+  /** Token deltas for live streaming. When present (with signal), the
+   * answer streams via LiteLLM SSE instead of one blocking call. */
+  onToken?: (delta: string) => void;
+  signal?: AbortSignal;
+  /** Agentic tool loop (Phase B): offer web_search/fetch_page tools and let
+   * the model drive lookups, instead of the hardcoded fetch below. Gated by
+   * the same router, with forced-search fallback when the model declines. */
+  agentic?: boolean;
 }): Promise<ChatResult> {
-  const webSearch = input.webSearch ?? false;
+  const mode = input.webSearch ?? "auto";
 
-  const webCitations = webSearch
+  let searchQuery: string | null = null;
+  let domain: SearchDomain = inferDomain(input.question);
+  if (mode === true) {
+    searchQuery = input.question;
+  } else if (mode === "auto") {
+    await input.onPhase?.("routing");
+    const decision = await decideSearchNeed({
+      apiKey: input.apiKey,
+      question: input.question,
+      history: input.history,
+    });
+    if (decision.needSearch && decision.rewrittenQuery) {
+      searchQuery = decision.rewrittenQuery;
+      domain = decision.domain === "none" ? domain : decision.domain;
+    } else {
+      domain = "none";
+    }
+  }
+
+  // Agentic path: the model drives lookups through tools. History is
+  // pre-shrunk by a full web budget (loop results land outside measured
+  // accounting), and a declined lookup falls back to today's forced fetch.
+  if (input.agentic && searchQuery) {
+    const loopHistory = await trimHistoryToTokenBudget(
+      input.history,
+      Math.max(0, CHAT_HISTORY_TOKEN_BUDGET - LIVE_SEARCH_TOKEN_BUDGET_STANDALONE)
+    );
+    const loopMessages: ToolChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...loopHistory,
+      { role: "user", content: input.question },
+    ];
+    const loop = await runAgentLoop({
+      apiKey: input.apiKey,
+      messages: loopMessages,
+      webBudgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
+      onPhase: input.onPhase,
+      signal: input.signal,
+    });
+    if (loop.toolCallsMade > 0) {
+      input.onToken?.(loop.content);
+      return {
+        answer: loop.content,
+        webCitations: loop.webCitations,
+        usage: {
+          promptTokens: loop.promptTokens,
+          completionTokens: loop.completionTokens,
+          totalTokens: loop.totalTokens,
+        },
+      };
+    }
+    // Model declined the tools — fall through to the forced fetch below
+    // with the router's query, preserving today's auto behavior exactly.
+  }
+
+  if (searchQuery) await input.onPhase?.("searching");
+  const webCitations = searchQuery
     ? await getLiveSearchContext({
-        query: input.question,
+        query: searchQuery,
         budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
+        domain,
       })
     : [];
+  const autoSearched = mode === "auto" && searchQuery !== null;
   const webContextTokens =
     webCitations.length > 0 ? await countTokens(formatWebContext(webCitations)) : 0;
 
@@ -63,16 +139,29 @@ export async function answerChatMessage(input: {
       content:
         `Live web search results for this question (real pages, concise excerpts):\n\n${formatWebContext(webCitations)}\n\n` +
         "Rules: use ONLY facts in excerpts; cite per sentence with [n] (e.g. '... [1]'). " +
-        "If excerpts don't contain the answer, say so. Ignore irrelevant results and answer normally.",
+        "If excerpts don't contain the answer, say exactly that and stop — do not " +
+        "restate any previous turn. Ignore irrelevant results and answer normally. " +
+        "Answer only this question, fresh; never echo a prior turn's wording.",
     });
   }
   messages.push(...trimmedHistory, { role: "user", content: input.question });
 
-  const completion = await completeChat(input.apiKey, messages);
+  await input.onPhase?.("generating");
+  const completion =
+    input.onToken || input.signal
+      ? await completeChatStream(input.apiKey, messages, {
+          onDelta: input.onToken,
+          signal: input.signal,
+        })
+      : await completeChat(input.apiKey, messages);
 
+  // Preserve the old contract: forced=true always returns the array (even
+  // empty); auto returns it only when a search actually ran, else undefined.
+  const returnWebCitations =
+    mode === true ? webCitations : autoSearched ? webCitations : undefined;
   return {
     answer: completion.content,
-    webCitations: webSearch ? webCitations : undefined,
+    webCitations: returnWebCitations,
     usage: {
       promptTokens: completion.promptTokens,
       completionTokens: completion.completionTokens,

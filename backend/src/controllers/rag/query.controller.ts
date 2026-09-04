@@ -24,7 +24,7 @@ export async function query(req: Request, res: Response, next: NextFunction) {
 
     const ragKey = await resolveRagKey(rawKey).catch(() => null);
     if (!ragKey || ragKey.revokedAt) {
-      throw new AppError(401, "Invalid or revoked RAG key.");
+      throw new AppError(401, "Invalid, revoked, or expired RAG key.");
     }
 
     const question = String(req.body?.question ?? "").trim();

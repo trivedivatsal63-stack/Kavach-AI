@@ -42,13 +42,18 @@ export interface GeneratedLiteLLMKey {
 
 export async function generateLiteLLMKey(
   dashboardUserId: string,
-  maxBudget: number
+  maxBudget: number,
+  options?: { alias?: string; expires?: Date }
 ): Promise<GeneratedLiteLLMKey> {
   const res = await litellmFetch(`/key/generate`, {
     method: "POST",
     headers: authHeaders(masterKey()),
     body: JSON.stringify({
       max_budget: maxBudget,
+      // key_alias shows in LiteLLM's own UI; expires is enforced natively
+      // by LiteLLM at request time (invalid/expired keys 401).
+      ...(options?.alias ? { key_alias: options.alias } : {}),
+      ...(options?.expires ? { expires: options.expires.toISOString() } : {}),
       metadata: { dashboard_user_id: dashboardUserId },
     }),
   });
@@ -167,7 +172,15 @@ export async function testLiteLLMKey(
   }
 
   const choice = (
-    data as { choices?: Array<{ message?: { content?: string } }> }
+    data as {
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+          reasoning_content?: string | null;
+          reasoning?: string | null;
+        };
+      }>;
+    }
   ).choices?.[0];
   const usage = (
     data as {
@@ -179,10 +192,17 @@ export async function testLiteLLMKey(
     }
   ).usage;
 
+  const msg = choice?.message;
+  const reply =
+    (msg?.content && msg.content.trim()) ||
+    (msg?.reasoning_content && msg.reasoning_content.trim()) ||
+    (msg?.reasoning && msg.reasoning.trim()) ||
+    "";
+
   return {
     ok: true,
     status: res.status,
-    reply: choice?.message?.content ?? "",
+    reply,
     promptTokens: usage?.prompt_tokens,
     completionTokens: usage?.completion_tokens,
     totalTokens: usage?.total_tokens,

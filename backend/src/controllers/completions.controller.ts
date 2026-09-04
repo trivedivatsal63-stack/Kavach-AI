@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { env } from "../config";
 import { getLiveSearchContext } from "../services/liveSearch/liveSearch.service";
+import { decideSearchNeed, inferDomain } from "../services/liveSearch/searchDecision.service";
+import type { WebCitation } from "../services/liveSearch/types";
 import { formatWebContext } from "../services/liveSearch/webCitationFormat";
 import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constants";
 import { findUserByPresentedApiKey } from "../services/keys.service";
@@ -75,27 +77,54 @@ export async function completions(req: Request, res: Response) {
       return;
     }
 
-    const webSearch = body.web_search === true;
+    // Tri-state: true = forced search, false = never, "auto"/omitted =
+    // model decides + rewrites (same router as chat/RAG) so fresh API keys
+    // get agentic search with zero integration work. Injection (not the
+    // agent loop) is deliberate here: callers may pass their OWN tools, and
+    // a server-side loop would hijack them.
+    const rawWebSearch = body.web_search;
+    const webSearchMode: boolean | "auto" =
+      rawWebSearch === true ? true : rawWebSearch === false ? false : "auto";
     let citations: unknown;
+    let searched = false;
 
-    if (webSearch) {
+    {
       const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
-      const query = typeof lastUserMessage?.content === "string" ? lastUserMessage.content : "";
+      const lastText =
+        typeof lastUserMessage?.content === "string" ? lastUserMessage.content : "";
+      let searchQuery: string | null = null;
+      let domain = inferDomain(lastText);
+      if (webSearchMode === true) {
+        searchQuery = lastText || null;
+      } else if (webSearchMode === "auto" && lastText.trim()) {
+        try {
+          const decision = await decideSearchNeed({ apiKey, question: lastText });
+          if (decision.needSearch && decision.rewrittenQuery) {
+            searchQuery = decision.rewrittenQuery;
+            domain = decision.domain === "none" ? domain : decision.domain;
+          }
+        } catch (err) {
+          console.error("Public API search routing failed, skipping web search:", err);
+        }
+      }
 
-      const webCitations = query
-        ? await getLiveSearchContext({
-            query,
-            budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
-          })
-        : [];
-      citations = webCitations;
+      let webCitations: WebCitation[] = [];
+      if (searchQuery) {
+        searched = true;
+        webCitations = await getLiveSearchContext({
+          query: searchQuery,
+          budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
+          domain,
+        });
+        citations = webCitations;
+      }
 
       if (webCitations.length > 0) {
         const searchSystemMessage: OpenAIMessage = {
           role: "system",
           content:
             `Live web search results for the user's latest question (real pages, concise excerpts):\n\n${formatWebContext(webCitations)}\n\n` +
-            "Rules: use ONLY facts in excerpts; cite per sentence with [n]. If excerpts don't contain the answer, say so. Ignore irrelevant results and answer normally.",
+            "Rules: use ONLY facts in excerpts; cite per sentence with [n]. If excerpts don't contain the answer, say exactly that and stop. Answer only this question, fresh; never echo a prior turn's wording. Ignore irrelevant results and answer normally.",
         };
         // Inserted right after any caller-supplied system message(s), or at
         // the very front if none — a caller's own system prompt stays the
@@ -138,8 +167,9 @@ export async function completions(req: Request, res: Response) {
 
     // additive-only field beyond the standard OpenAI response shape —
     // ignored by strict clients, readable by anyone parsing the raw JSON.
+    // Present whenever a search actually ran (forced or auto-decided).
     res.status(litellmRes.status).json(
-      webSearch ? { ...(data as Record<string, unknown>), citations } : data
+      searched ? { ...(data as Record<string, unknown>), citations } : data
     );
   } catch (err) {
     console.error("POST /v1/chat/completions failed:", err);

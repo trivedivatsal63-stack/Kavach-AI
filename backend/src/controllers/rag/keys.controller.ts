@@ -4,8 +4,10 @@ import {
   createRagKey,
   getRagKeySpend,
   listRagKeys,
+  ragKeyStatusFor,
   revokeRagKey,
 } from "../../services/rag/keys.service";
+import { parseKeyExpiry } from "../../services/keys.service";
 import { AppError } from "../../middleware/errorHandler";
 
 export async function create(req: Request, res: Response, next: NextFunction) {
@@ -13,20 +15,23 @@ export async function create(req: Request, res: Response, next: NextFunction) {
     const userId = req.userId!;
     const name = String(req.body?.name ?? "")
       .trim()
-      .slice(0, 100);
+      .slice(0, 60);
 
     if (!name) {
       throw new AppError(400, "Name is required.");
     }
 
+    const expiresAt = parseKeyExpiry(req.body?.expiresAt);
+
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const maxBudget = user.creditBalanceUsd.toNumber();
-    const created = await createRagKey(userId, name, maxBudget);
+    const created = await createRagKey(userId, name, maxBudget, { expiresAt });
 
     res.status(201).json({
       id: created.id,
       key: created.key,
       name,
+      expiresAt: expiresAt?.toISOString() ?? null,
       createdAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -46,6 +51,9 @@ export async function list(req: Request, res: Response, next: NextFunction) {
       keys.map(async (k) => ({
         id: k.id,
         name: k.name,
+        keyPrefix: k.keyPrefix,
+        expiresAt: k.expiresAt,
+        status: ragKeyStatusFor(k),
         createdAt: k.createdAt,
         revokedAt: k.revokedAt,
         spend: await getRagKeySpend(k.tokenId),

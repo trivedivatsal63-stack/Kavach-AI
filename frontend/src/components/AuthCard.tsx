@@ -15,7 +15,7 @@ export function AuthCard({
         aria-hidden
         className="pointer-events-none absolute inset-0 overflow-hidden"
       >
-        <div className="absolute -left-32 top-8 h-72 w-72 rounded-full bg-indigo-400/20 blur-3xl dark:bg-indigo-600/20" />
+        <div className="absolute -left-32 top-8 h-72 w-72 rounded-full bg-gray-400/20 blur-3xl dark:bg-neutral-600/20" />
         <div className="absolute -right-32 bottom-8 h-72 w-72 rounded-full bg-violet-400/20 blur-3xl dark:bg-violet-600/20" />
       </div>
 

@@ -14,3 +14,8 @@ conversationsRouter.post(
   requireActiveAccount,
   conversationsController.sendMessage
 );
+conversationsRouter.post(
+  "/:id/messages/stream",
+  requireActiveAccount,
+  conversationsController.sendMessageStream
+);

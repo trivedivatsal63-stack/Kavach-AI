@@ -8,7 +8,7 @@ const CURL_EXAMPLE = `curl https://your-gateway/v1/chat/completions \\
   -H "Authorization: Bearer $KAVACH_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "qwen3-30b-a3b",
+    "model": "mistral-small-24b-awq",
     "messages": [{"role": "user", "content": "Summarize this clause..."}]
   }'`;
 
@@ -47,18 +47,15 @@ export function HomePage() {
         <div className="relative mx-auto flex w-full max-w-7xl flex-col items-center gap-7 px-4 py-24 text-center sm:px-6 sm:py-28">
           <ShieldMark className="h-16 w-auto drop-shadow-sm sm:h-20" />
           <span className="eyebrow">
-            <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+            <span className="h-1.5 w-1.5 rounded-full bg-gray-500" />
             Self-hosted LLM gateway
           </span>
           <h1 className="font-display max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-5xl lg:text-6xl">
-            Your models. Your data.{" "}
-            <span className="bg-gradient-to-r from-indigo-500 to-violet-600 bg-clip-text text-transparent">
-              One shielded gateway.
-            </span>
+            Your models. Your data. One shielded gateway.
           </h1>
           <p className="max-w-xl text-base text-gray-600 sm:text-lg dark:text-gray-400">
             Harrier runs a fully self-hosted stack — vLLM serving
-            qwen3-30b-a3b through LiteLLM — with API keys, budgets, usage
+            mistral-small-24b-awq through LiteLLM — with API keys, budgets, usage
             tracking and a private RAG store, all on infrastructure you
             control.
           </p>
@@ -90,7 +87,7 @@ export function HomePage() {
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:items-center lg:gap-16">
           <div>
             <span className="eyebrow">
-              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+              <span className="h-1.5 w-1.5 rounded-full bg-gray-500" />
               Drop-in
             </span>
             <h2 className="font-display mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
@@ -119,7 +116,7 @@ export function HomePage() {
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6">
           <div className="mx-auto max-w-2xl text-center">
             <span className="eyebrow justify-center">
-              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+              <span className="h-1.5 w-1.5 rounded-full bg-gray-500" />
               What you get
             </span>
             <h2 className="font-display mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
@@ -134,7 +131,7 @@ export function HomePage() {
                 key={f.title}
                 className="card card-hover p-5 text-left"
               >
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-gray-100 text-gray-700 dark:bg-neutral-800 dark:text-gray-200">
                   <f.icon className="h-5 w-5" />
                 </div>
                 <h3 className="mt-3.5 text-sm font-semibold">{f.title}</h3>

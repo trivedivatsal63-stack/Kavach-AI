@@ -25,7 +25,10 @@ export async function test(req: Request, res: Response, next: NextFunction) {
 
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
-    const result = await keysService.createKey(req.userId!);
+    const result = await keysService.createKey(req.userId!, {
+      name: req.body?.name,
+      expiresAt: req.body?.expiresAt,
+    });
     res.status(201).json(result);
   } catch (err) {
     console.error("POST /keys failed:", err);
@@ -34,6 +37,15 @@ export async function create(req: Request, res: Response, next: NextFunction) {
         ? err
         : new AppError(500, "Failed to generate key.")
     );
+  }
+}
+
+export async function rename(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json(await keysService.renameKey(req.userId!, String(req.params.id), req.body?.name));
+  } catch (err) {
+    console.error("PUT /keys/:id failed:", err);
+    next(err instanceof AppError ? err : new AppError(500, "Failed to rename key."));
   }
 }
 

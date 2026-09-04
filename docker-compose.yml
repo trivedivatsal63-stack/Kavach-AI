@@ -32,12 +32,9 @@ services:
     # VLLM_MAX_NUM_SEQS below), not hardcoded to a specific card, so a bigger
     # GPU just means raising these in .env, not editing this file.
     # NOTE: Local defaults stay Qwen (8GB-safe). RunPod overrides via .env to
-    # cyankiwi/Muse-Glimmer-30B-AWQ-INT4 (see .env.runpod.example). Glimmer
-    # requires nightly + muse_glimmer parsers — added via runpod-start-vllm.sh
-    # for RunPod; local compose keeps minimal flags so Qwen still boots. If you
-    # manually set VLLM_MODEL to Glimmer locally, add --enable-auto-tool-choice
-    # --tool-call-parser muse_glimmer --reasoning-parser muse_glimmer --generation-config auto
-    # to the command abaixo.
+    # stelterlab/Mistral-Small-24B-Instruct-2501-AWQ (see .env.runpod.example).
+    # Mistral tool calls + tokenizer-mode are added via runpod-start-vllm.sh
+    # for RunPod; local compose keeps minimal flags so Qwen still boots.
     command:
       - --model=${VLLM_MODEL:-Qwen/Qwen2.5-1.5B-Instruct-AWQ}
       - --served-model-name=${VLLM_SERVED_NAME:-qwen2.5-1.5b}

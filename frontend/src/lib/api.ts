@@ -24,8 +24,14 @@ export interface OtpChallenge {
 
 export type OtpPurpose = "signup" | "login" | "reset";
 
+export type KeyStatus = "active" | "expiring-soon" | "expired" | "revoked";
+
 export interface ApiKeySummary {
   id: string;
+  name: string;
+  keyPrefix: string;
+  expiresAt: string | null;
+  status: KeyStatus;
   createdAt: string;
   revokedAt: string | null;
 }
@@ -33,7 +39,30 @@ export interface ApiKeySummary {
 export interface GeneratedKey {
   id: string;
   key: string;
+  name: string;
+  keyPrefix: string;
+  expiresAt: string | null;
   createdAt: string;
+}
+
+export interface KeyExpiryPreset {
+  label: string;
+  days: number | null;
+}
+
+export const KEY_EXPIRY_PRESETS: KeyExpiryPreset[] = [
+  { label: "7 days", days: 7 },
+  { label: "30 days", days: 30 },
+  { label: "90 days", days: 90 },
+  { label: "Never", days: null },
+];
+
+/** ISO date for `days` from now (midday UTC to avoid boundary flakiness). */
+export function expiryIsoFromDays(days: number | null): string | null {
+  if (days == null) return null;
+  const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  d.setUTCHours(12, 0, 0, 0);
+  return d.toISOString();
 }
 
 export interface UsageRow {
@@ -151,8 +180,29 @@ export function listKeys(token: string) {
   return request<ApiKeySummary[]>("/keys", {}, token);
 }
 
-export function generateKey(token: string) {
-  return request<GeneratedKey>("/keys", { method: "POST" }, token);
+export function generateKey(
+  token: string,
+  input?: { name?: string; expiresAt?: string | null }
+) {
+  return request<GeneratedKey>(
+    "/keys",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...(input?.name ? { name: input.name } : {}),
+        ...(input?.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      }),
+    },
+    token
+  );
+}
+
+export function renameKey(token: string, id: string, name: string) {
+  return request<{ id: string; name: string }>(
+    `/keys/${id}`,
+    { method: "PUT", body: JSON.stringify({ name }) },
+    token
+  );
 }
 
 export function revokeKey(token: string, id: string) {
@@ -217,6 +267,9 @@ export interface RagChatResponse {
 export interface RagKeySummary {
   id: string;
   name: string;
+  keyPrefix: string;
+  expiresAt: string | null;
+  status: KeyStatus;
   createdAt: string;
   revokedAt: string | null;
   spend: number;
@@ -226,6 +279,7 @@ export interface RagCreatedKey {
   id: string;
   key: string;
   name: string;
+  expiresAt: string | null;
   createdAt: string;
 }
 
@@ -337,10 +391,13 @@ export function ragChat(
   );
 }
 
-export function ragCreateKey(token: string, name: string) {
+export function ragCreateKey(token: string, name: string, expiresAt?: string | null) {
   return request<RagCreatedKey>(
     "/rag/keys",
-    { method: "POST", body: JSON.stringify({ name }) },
+    {
+      method: "POST",
+      body: JSON.stringify({ name, ...(expiresAt ? { expiresAt } : {}) }),
+    },
     token
   );
 }
@@ -412,6 +469,8 @@ export interface SendMessageResponse {
   userMessage: ConversationMessage;
   assistantMessage: ConversationMessage;
   conversation: ConversationSummary;
+  /** True when the turn ended via Stop and the text is partial. */
+  stopped?: boolean;
 }
 
 export function listConversations(token: string, mode: ConversationMode) {
@@ -472,6 +531,89 @@ export function sendConversationMessage(
   );
 }
 
+export type StreamPhase = "routing" | "searching" | "retrieving" | "generating";
+
+export interface StreamEvents {
+  onPhase?: (phase: StreamPhase) => void;
+  /** Token deltas (Phase 4). Absent until the backend emits them. */
+  onToken?: (delta: string) => void;
+  onDone?: (result: SendMessageResponse) => void;
+}
+
+// Streaming variant of sendConversationMessage over the SSE endpoint
+// (EventSource can't POST, so fetch + manual SSE parsing). Resolves with
+// the persisted `done` payload; rejects with ApiError on `error` events
+// or non-2xx pre-stream failures. Pass an AbortSignal to support Stop.
+export async function sendConversationMessageStream(
+  token: string,
+  id: string,
+  content: string,
+  webSearch: boolean | undefined,
+  events: StreamEvents = {},
+  signal?: AbortSignal
+): Promise<SendMessageResponse> {
+  const res = await fetch(`${API_BASE_URL}/conversations/${id}/messages/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify({ content, ...(webSearch ? { webSearch: true } : {}) }),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    const message =
+      (data as { error?: string }).error ?? `Request failed with status ${res.status}`;
+    throw new ApiError(res.status, message);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: SendMessageResponse | null = null;
+
+  const dispatch = (rawEvent: string) => {
+    const eventMatch = /^event: ([^\n]+)\ndata: ([\s\S]*)$/.exec(rawEvent.trim());
+    if (!eventMatch) return;
+    const [, event, dataRaw] = eventMatch;
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(dataRaw);
+    } catch {
+      return;
+    }
+    if (event === "status" && typeof data.phase === "string") {
+      events.onPhase?.(data.phase as StreamPhase);
+    } else if (event === "token" && typeof data.delta === "string") {
+      events.onToken?.(data.delta);
+    } else if (event === "done") {
+      donePayload = data as unknown as SendMessageResponse;
+      events.onDone?.(donePayload);
+    } else if (event === "error") {
+      const message = typeof data.message === "string" ? data.message : "Failed to send message.";
+      const status = typeof data.status === "number" ? data.status : 500;
+      throw new ApiError(status, message);
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      dispatch(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+  if (buffer.trim()) dispatch(buffer);
+  if (!donePayload) throw new ApiError(500, "Stream ended without a result.");
+  return donePayload;
+}
+
 // ── Superadmin ────────────────────────────────────────────────────────────
 
 export interface AdminUserSummary {
@@ -492,6 +634,8 @@ export interface AdminUserKey {
   id: string;
   kind: "api" | "rag";
   name?: string;
+  keyPrefix?: string;
+  expiresAt?: string | null;
   createdAt: string;
   revokedAt: string | null;
   totalSpend: number;

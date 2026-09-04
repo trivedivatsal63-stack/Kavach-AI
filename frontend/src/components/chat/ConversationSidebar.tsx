@@ -1,4 +1,5 @@
 import type { ConversationSummary } from "../../lib/api";
+import { XIcon } from "../icons";
 
 export function ConversationSidebar({
   conversations,
@@ -50,7 +51,7 @@ export function ConversationSidebar({
                 className="shrink-0 rounded p-1 text-gray-400 opacity-0 transition-opacity hover:bg-gray-200 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-neutral-700 dark:hover:text-red-400"
                 aria-label={`Delete ${c.title}`}
               >
-                ✕
+                <XIcon className="h-3.5 w-3.5" />
               </button>
             </div>
           </li>
