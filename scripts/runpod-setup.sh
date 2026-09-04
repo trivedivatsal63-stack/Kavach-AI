@@ -226,6 +226,8 @@ echo "==> [10/10] supervisord config"
 chmod +x "${REPO_ROOT}/scripts/runpod-setup.sh" \
          "${REPO_ROOT}/scripts/runpod-deploy.sh" \
          "${REPO_ROOT}/scripts/runpod-start-vllm.sh" \
+         "${REPO_ROOT}/scripts/runpod-start-postgres.sh" \
+         "${REPO_ROOT}/scripts/runpod-start.sh" \
          "${REPO_ROOT}/scripts/backup-runpod.sh" \
          "${REPO_ROOT}/scripts/sync-backend-env.sh" 2>/dev/null || true
 

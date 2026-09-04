@@ -83,6 +83,35 @@ Volume disk itself is destroyed only if the pod is **terminated/deleted**
 (as opposed to stopped) — with current dumps on the volume plus an off-pod
 `.env` copy, even that is recoverable onto a new pod.
 
+### 2b) Stop / resume workflow (pause-safe, one command each way)
+
+**Before every Stop** (container disk incl. live Postgres is wiped on stop):
+
+```bash
+./scripts/backup-runpod.sh   # pg_dumpall → /workspace/backups/latest.sql (+ rotation)
+```
+
+**After every Start** (fresh container disk, `/workspace` intact):
+
+```bash
+./scripts/runpod-start.sh
+```
+
+What it does, in order: recreates `/var/lib/postgresql` + socket dir as
+root → validates secrets → re-syncs `backend/.env` → starts supervisord
+(Postgres entrypoint auto-inits and restores `latest.sql` on a fresh disk,
+so users/keys/docs metadata are back with zero manual steps) → syncs the
+DB role password → bounces backend+litellm (fresh pools, vLLM keeps
+loading) → polls all health endpoints and prints the proxy URLs. No
+rebuild, no re-init, no model re-download (weights persist in
+`/workspace/.hf-cache`) — vLLM just reloads them into GPU (~7 min).
+
+Use `runpod-deploy.sh` instead when: first install, code changed,
+`.env` edits affecting DB URLs / master key / VLLM model, or the frontend
+needs rebuilding with new proxy URLs. After `.env` edits affecting only
+app keys (secrets, SMTP, CORS, model names): `./scripts/sync-backend-env.sh`
+then `supervisorctl restart backend` — no daemon restart needed.
+
 ### 3) Provision (once — idempotent, safe to re-run)
 
 ```bash
