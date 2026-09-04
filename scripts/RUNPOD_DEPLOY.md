@@ -58,17 +58,30 @@ cd kavach-ai
 `supervisord.conf` and the scripts assume the repo lives at
 `/workspace/kavach-ai`. Do not clone elsewhere.
 
-### 2) ⚠️ Do not delete/terminate this pod without backing up first
+### 2) ⚠️ Back up before every Stop — Postgres is NOT on the volume
 
-Volume disk is destroyed with the pod. Before any deliberate teardown, back up
-at least:
+`/workspace` on this template is a FUSE network mount **without `chown`
+support** (verified live), and Postgres refuses to run on a data directory
+it doesn't own. So the live cluster runs on container disk
+(`/var/lib/postgresql/pgdata`), which is **wiped on every pod stop** —
+only `/workspace` survives. Qdrant (`/workspace/qdrant/storage`), the HF
+cache, venvs, repo and `.env` are already volume-native and need nothing.
 
-- `/workspace/pgdata`
-- `/workspace/qdrant/storage`
+The safety net is dumps, not the live files:
 
-(HF model cache under `/workspace/.hf-cache` is large but re-downloadable.)
+```bash
+./scripts/backup-runpod.sh   # pg_dumpall → /workspace/backups/latest.sql (+ rotation)
+```
 
-**Stopping and restarting the same pod is safe** and does not wipe Volume disk.
+Run it **before every Stop**. `runpod-setup.sh` auto-restores
+`latest.sql` onto a fresh container disk, and `runpod-deploy.sh` refreshes
+the dump after every successful deploy — but a crash between deploy and
+Stop would lose data without a manual backup. Also copy `.env` off-pod
+once (secrets are not in git).
+
+Volume disk itself is destroyed only if the pod is **terminated/deleted**
+(as opposed to stopped) — with current dumps on the volume plus an off-pod
+`.env` copy, even that is recoverable onto a new pod.
 
 ### 3) Provision (once — idempotent, safe to re-run)
 
@@ -77,9 +90,11 @@ chmod +x scripts/runpod-setup.sh scripts/runpod-deploy.sh scripts/runpod-start-v
 ./scripts/runpod-setup.sh
 ```
 
-Installs system packages, Postgres under `/workspace/pgdata`, vLLM / LiteLLM /
-embedding / SearXNG venvs, Qdrant binary, backend build, frontend `npm ci`
-(frontend *build* is deferred to deploy so proxy URLs can be baked in).
+Installs system packages, Postgres cluster on container disk (auto-restoring
+`/workspace/backups/latest.sql` when present — see section 2),
+vLLM / LiteLLM / embedding / SearXNG venvs, Qdrant binary, backend build,
+frontend `npm ci` (frontend *build* is deferred to deploy so proxy URLs can
+be baked in).
 
 ### 4) Deploy
 

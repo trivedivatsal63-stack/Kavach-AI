@@ -112,9 +112,9 @@ export DATABASE_URL LITELLM_DATABASE_URL LITELLM_BASE_URL VLLM_BASE_URL
 export FRONTEND_URL BACKEND_URL LITELLM_URL
 export HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
 
-# Fail fast if setup never initialized the volume data dir (wrong order).
-if [[ ! -f /workspace/pgdata/PG_VERSION ]]; then
-  echo "ERROR: /workspace/pgdata is not initialized — run ./scripts/runpod-setup.sh first."
+# Fail fast if setup never initialized the cluster (wrong order).
+if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
+  echo "ERROR: Postgres cluster not initialized — run ./scripts/runpod-setup.sh first."
   exit 1
 fi
 
@@ -124,14 +124,14 @@ if [[ -x /workspace/bin/pg_bin/psql ]]; then
   # Start briefly via peer auth if not already up under supervisord
   if ! /workspace/bin/pg_bin/pg_isready -h /var/run/postgresql -q 2>/dev/null \
      && ! /workspace/bin/pg_bin/pg_isready -h 127.0.0.1 -q 2>/dev/null; then
-    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /workspace/pgdata -l "${LOG_DIR}/postgres-predeploy.log" start || true
+    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /var/lib/postgresql/pgdata -l "${LOG_DIR}/postgres-predeploy.log" start || true
     sleep 2
     STARTED_PG_FOR_SYNC=1
   fi
   runuser -u postgres -- /workspace/bin/pg_bin/psql -d postgres -v ON_ERROR_STOP=1 \
     -c "ALTER USER postgres WITH PASSWORD '${POSTGRES_PASSWORD//\'/\'\'}'" || true
   if [[ "${STARTED_PG_FOR_SYNC:-0}" == "1" ]]; then
-    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /workspace/pgdata stop || true
+    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /var/lib/postgresql/pgdata stop || true
   fi
 fi
 
@@ -199,6 +199,22 @@ if (( FAILED != 0 )); then
   echo "  supervisorctl -c ${SUPERVISORD_CONF} status"
   echo "  supervisorctl -c ${SUPERVISORD_CONF} tail <service>"
   exit 1
+fi
+
+# Snapshot Postgres to the volume (survives stop/resume/recreate). Keeps the
+# last 5 timestamped dumps + latest.sql, which runpod-setup.sh auto-restores
+# on a fresh container disk. Always run scripts/backup-runpod.sh before
+# stopping the pod — this deploy-time snapshot is a safety net, not a
+# substitute (a crash between deploy and Stop would otherwise lose data).
+echo "==> Backing up Postgres to /workspace/backups"
+mkdir -p /workspace/backups
+BACKUP_TS="$(date +%Y%m%d-%H%M%S)"
+if runuser -u postgres -- /workspace/bin/pg_bin/pg_dumpall -f "/workspace/backups/pg-${BACKUP_TS}.sql"; then
+  cp -f "/workspace/backups/pg-${BACKUP_TS}.sql" /workspace/backups/latest.sql
+  ls -t /workspace/backups/pg-*.sql 2>/dev/null | tail -n +6 | xargs -r rm -f
+  echo "    backup saved (latest.sql refreshed)"
+else
+  echo "    WARNING: Postgres backup failed — run scripts/backup-runpod.sh manually before stopping the pod."
 fi
 
 echo

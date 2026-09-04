@@ -13,7 +13,7 @@ if [[ "${REPO_ROOT}" != "${EXPECTED_REPO}" ]]; then
 fi
 
 LOG_DIR="${REPO_ROOT}/logs"
-mkdir -p /workspace/venvs /workspace/bin /workspace/qdrant/storage /workspace/.hf-cache "${LOG_DIR}"
+mkdir -p /workspace/venvs /workspace/bin /workspace/qdrant/storage /workspace/.hf-cache /workspace/backups "${LOG_DIR}"
 
 echo "==> [1/10] System packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -33,16 +33,23 @@ if ! command -v node >/dev/null 2>&1 || ! node -v | grep -qE '^v(2[0-9]|[3-9][0-
 fi
 echo "    node $(node -v) / npm $(npm -v)"
 
-echo "==> [2/10] Postgres cluster under /workspace/pgdata (volume — survives stop/resume)"
+echo "==> [2/10] Postgres cluster (live on container disk + dump/restore to volume)"
 PG_VERSION="$(ls /usr/lib/postgresql | sort -V | tail -n1)"
 PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
-# Single source for the data dir: /var/lib/postgresql is container-ephemeral
-# and loses ALL user data on pod stop. Everything stateful lives on /workspace.
-PGDATA="/workspace/pgdata"
+# Live data dir MUST be on container disk: /workspace is a FUSE network mount
+# (user_id=0, no chown support — verified live: chown to postgres fails with
+# EPERM), and Postgres refuses to initdb/run on a directory it doesn't own.
+# Stop-safety comes from dumps in /workspace/backups (which DO survive
+# stop/resume): fresh clusters auto-restore from latest.sql below, and every
+# deploy + scripts/backup-runpod.sh refresh the dump. Qdrant/HF-cache/venvs
+# need no chown, so they stay directly on /workspace.
+PGDATA="/var/lib/postgresql/pgdata"
+FRESH_INIT=0
 ln -sfn "${PG_BIN}" /workspace/bin/pg_bin
 echo "    PostgreSQL ${PG_VERSION} → /workspace/bin/pg_bin (data: ${PGDATA})"
 
 if [[ ! -f "${PGDATA}/PG_VERSION" ]]; then
+  FRESH_INIT=1
   mkdir -p "${PGDATA}"
   chown -R postgres:postgres "${PGDATA}"
   su postgres -c "${PG_BIN}/initdb -D ${PGDATA} --auth-local=peer --auth-host=scram-sha-256"
@@ -80,6 +87,20 @@ EOSQL
   echo "    Postgres databases ready (password will be set on deploy)."
 else
   echo "    Postgres already initialized (skipping)."
+fi
+
+# Fresh container disk + volume backup present = this pod was resumed or
+# recreated: restore user data (users, keys, docs metadata, LiteLLM spend)
+# over the empty databases created above.
+if [[ "${FRESH_INIT}" == "1" && -f /workspace/backups/latest.sql ]]; then
+  echo "    Restoring Postgres from /workspace/backups/latest.sql…"
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} -l ${LOG_DIR}/postgres-restore.log start"
+  sleep 2
+  su postgres -c "${PG_BIN}/psql -d postgres -c 'DROP DATABASE IF EXISTS litellm;'"
+  su postgres -c "${PG_BIN}/psql -d postgres -c 'DROP DATABASE IF EXISTS dashboard;'"
+  su postgres -c "${PG_BIN}/psql -d postgres -v ON_ERROR_STOP=1 -f /workspace/backups/latest.sql"
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} stop"
+  echo "    Restore complete."
 fi
 
 echo "==> [3/10] vLLM venv"
@@ -187,7 +208,8 @@ echo "==> [10/10] supervisord config"
 # apt supervisor looks under /etc/supervisor; we always launch with -c explicitly.
 chmod +x "${REPO_ROOT}/scripts/runpod-setup.sh" \
          "${REPO_ROOT}/scripts/runpod-deploy.sh" \
-         "${REPO_ROOT}/scripts/runpod-start-vllm.sh" 2>/dev/null || true
+         "${REPO_ROOT}/scripts/runpod-start-vllm.sh" \
+         "${REPO_ROOT}/scripts/backup-runpod.sh" 2>/dev/null || true
 
 echo
 echo "Setup complete."
