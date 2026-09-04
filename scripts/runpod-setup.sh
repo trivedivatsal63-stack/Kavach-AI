@@ -129,12 +129,19 @@ if [[ ! -x /workspace/venvs/litellm/bin/pip ]]; then
 fi
 /workspace/venvs/litellm/bin/pip install --upgrade pip
 /workspace/venvs/litellm/bin/pip install 'litellm[proxy]'
-# The DB-backed proxy needs the prisma client package at startup
-# (proxy_server imports prisma.engine on boot for Postgres). The [proxy]
-# extra does not reliably pull it in — without this, litellm crash-loops
-# with "ModuleNotFoundError: No module named 'prisma'". Startup generates
-# the client itself once the package is present.
+# The DB-backed proxy needs the prisma client package AND its generated
+# query-engine binaries at startup. The [proxy] extra reliably provides
+# neither — without the package, litellm crash-loops with
+# "ModuleNotFoundError: No module named 'prisma'"; without generate, with
+# "Unable to find Prisma binaries. Please run 'prisma generate' first."
+# (both confirmed live). The schema ships inside the litellm wheel.
 /workspace/venvs/litellm/bin/pip install 'prisma>=0.11'
+LITELLM_SCHEMA="$(find /workspace/venvs/litellm/lib -name schema.prisma -path '*litellm*' 2>/dev/null | head -n1)"
+if [[ -n "${LITELLM_SCHEMA}" ]]; then
+  /workspace/venvs/litellm/bin/prisma generate --schema "${LITELLM_SCHEMA}"
+else
+  echo "    WARNING: litellm schema.prisma not found — proxy DB startup will fail."
+fi
 
 echo "==> [5/10] Embedding venv"
 if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
