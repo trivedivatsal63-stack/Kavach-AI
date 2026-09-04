@@ -171,6 +171,7 @@ sudo -u postgres psql -h 127.0.0.1 -d dashboard
 | Repo path warnings | Clone must be `/workspace/kavach-ai` to match `supervisord.conf` |
 | LiteLLM DB / auth errors | Confirm `litellm` DB exists and `POSTGRES_PASSWORD` matches what setup wrote |
 | Frontend talks to wrong host | Re-run `./scripts/runpod-deploy.sh` so Vite rebuilds with current proxy URLs |
+| Changed `.env` but backend ignores it | The supervisord *daemon* bakes env at launch and `restart backend` reuses it (dotenv never overrides set vars — verified live with blank `SMTP_*` killing all OTP mail silently). For app keys (secrets, models, SMTP, CORS): `./scripts/sync-backend-env.sh` then `supervisorctl restart backend`. Only DB URLs / master key / VLLM model need a daemon restart or full re-deploy |
 
 Useful commands:
 

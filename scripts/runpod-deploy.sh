@@ -112,38 +112,28 @@ export DATABASE_URL LITELLM_DATABASE_URL LITELLM_BASE_URL VLLM_BASE_URL
 export FRONTEND_URL BACKEND_URL LITELLM_URL
 export HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
 
-# backend/.env is what node actually reads (dotenv loads CWD/backend/.env;
-# supervisord only injects service URLs). Derive it from the root .env so
-# there is a single source of truth — a hand-copied backend/.env with stale
-# model names or placeholder secrets silently breaks completions, master-key
-# calls and CORS. printf (not echo/heredoc) so $/backticks in secrets pass
-# through literally.
+# backend/.env is what node actually reads (dotenv loads CWD/backend/.env).
+# Single source of truth lives in the root .env — see sync-backend-env.sh.
 echo "==> Syncing backend/.env from root .env"
-{
-  printf '%s=%s\n' "DATABASE_URL" "${DATABASE_URL}"
-  printf '%s=%s\n' "JWT_SECRET" "${JWT_SECRET}"
-  printf '%s=%s\n' "LITELLM_BASE_URL" "http://127.0.0.1:4000"
-  printf '%s=%s\n' "LITELLM_MASTER_KEY" "${LITELLM_MASTER_KEY}"
-  printf '%s=%s\n' "CHAT_MODEL" "${CHAT_MODEL:-mistral-small-24b-awq}"
-  printf '%s=%s\n' "RAG_CHAT_MODEL" "${RAG_CHAT_MODEL:-${CHAT_MODEL:-mistral-small-24b-awq}}"
-  printf '%s=%s\n' "MODEL_MAX_CONTEXT_TOKENS" "${MODEL_MAX_CONTEXT_TOKENS:-32768}"
-  printf '%s=%s\n' "QDRANT_URL" "http://127.0.0.1:6333"
-  printf '%s=%s\n' "EMBEDDING_BASE_URL" "http://127.0.0.1:8002"
-  printf '%s=%s\n' "EMBEDDING_MODEL" "${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}"
-  printf '%s=%s\n' "EMBEDDING_DIM" "${EMBEDDING_DIM:-384}"
-  printf '%s=%s\n' "SEARXNG_URL" "http://127.0.0.1:8889"
-  printf '%s=%s\n' "SUPERADMIN_EMAIL" "${SUPERADMIN_EMAIL:-}"
-  printf '%s=%s\n' "SMTP_HOST" "${SMTP_HOST:-}"
-  printf '%s=%s\n' "SMTP_PORT" "${SMTP_PORT:-587}"
-  printf '%s=%s\n' "SMTP_SECURE" "${SMTP_SECURE:-false}"
-  printf '%s=%s\n' "SMTP_USER" "${SMTP_USER:-}"
-  printf '%s=%s\n' "SMTP_PASS" "${SMTP_PASS:-}"
-  printf '%s=%s\n' "SMTP_FROM" "${SMTP_FROM:-}"
-  printf '%s=%s\n' "SMTP_TLS_INSECURE" "${SMTP_TLS_INSECURE:-}"
-  printf '%s=%s\n' "PORT" "4001"
-  printf '%s=%s\n' "CORS_ORIGIN" "${CORS_ORIGIN}"
-} > "${REPO_ROOT}/backend/.env"
-echo "    backend/.env synced"
+"${REPO_ROOT}/scripts/sync-backend-env.sh"
+
+# Unset backend-file-owned keys before launching supervisord. Rationale
+# (verified live): `set -a; source .env` exports EVERYTHING including empty
+# values, the supervisord daemon inherits them, every child inherits the
+# daemon's env, and dotenv never overrides already-set vars. So a
+# `supervisorctl restart backend` after a root .env edit silently kept the
+# OLD values (e.g. blank SMTP_* killed all OTP email with no error).
+# Unsetting these (none are referenced by any program's environment= line —
+# only service URLs and DB/master credentials stay in daemon env) makes
+# backend/.env the sole source: `restart backend` always picks up the file.
+# Rule: DB URLs / master key / VLLM model changes still need a daemon
+# restart or full re-deploy; everything else is sync + `restart backend`.
+# NOTE: EMBEDDING_MODEL/DIM stay exported — embedding/app/main.py reads them
+# from daemon env (no dotenv there). Everything unset below is consumed only
+# by the backend node process via backend/.env.
+unset JWT_SECRET CHAT_MODEL RAG_CHAT_MODEL MODEL_MAX_CONTEXT_TOKENS
+unset SUPERADMIN_EMAIL CORS_ORIGIN
+unset SMTP_HOST SMTP_PORT SMTP_SECURE SMTP_USER SMTP_PASS SMTP_FROM SMTP_TLS_INSECURE
 
 # Fail fast if setup never initialized the cluster (wrong order).
 if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
