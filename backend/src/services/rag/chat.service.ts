@@ -4,7 +4,7 @@ import type { PhaseCallback } from "../pipelinePhases";
 import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./tokenizer.service";
 import { formatContext } from "./citationFormat";
 import { getLiveSearchContext } from "../liveSearch/liveSearch.service";
-import { decideSearchNeed } from "../liveSearch/searchDecision.service";
+import { decideSearchNeed, inferDomain, type SearchDomain } from "../liveSearch/searchDecision.service";
 import { formatWebContext } from "../liveSearch/webCitationFormat";
 import { RAG_HISTORY_TOKEN_BUDGET } from "../../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG } from "../../utils/liveSearch.constants";
@@ -104,6 +104,7 @@ export async function answerQuestion(input: {
   const mode = input.webSearch ?? "auto";
 
   let searchQuery: string | null = null;
+  let domain: SearchDomain = inferDomain(input.question);
   if (mode === true) {
     searchQuery = input.question;
   } else if (mode === "auto") {
@@ -115,6 +116,9 @@ export async function answerQuestion(input: {
     });
     if (decision.needSearch && decision.rewrittenQuery) {
       searchQuery = decision.rewrittenQuery;
+      domain = decision.domain === "none" ? domain : decision.domain;
+    } else {
+      domain = "none";
     }
   }
   const webSearch = searchQuery !== null;
@@ -146,6 +150,7 @@ export async function answerQuestion(input: {
     ? await getLiveSearchContext({
         query: searchQuery,
         budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+        domain,
       })
     : [];
   const webContextTokens =

@@ -1,7 +1,7 @@
 import { completeChat, completeChatStream, type ChatMessage } from "./rag/completion.service";
 import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./rag/tokenizer.service";
 import { getLiveSearchContext } from "./liveSearch/liveSearch.service";
-import { decideSearchNeed } from "./liveSearch/searchDecision.service";
+import { decideSearchNeed, inferDomain, type SearchDomain } from "./liveSearch/searchDecision.service";
 import { formatWebContext } from "./liveSearch/webCitationFormat";
 import type { WebCitation } from "./liveSearch/types";
 import { CHAT_HISTORY_TOKEN_BUDGET } from "../utils/chat.constants";
@@ -53,6 +53,7 @@ export async function answerChatMessage(input: {
   const mode = input.webSearch ?? "auto";
 
   let searchQuery: string | null = null;
+  let domain: SearchDomain = inferDomain(input.question);
   if (mode === true) {
     searchQuery = input.question;
   } else if (mode === "auto") {
@@ -64,6 +65,9 @@ export async function answerChatMessage(input: {
     });
     if (decision.needSearch && decision.rewrittenQuery) {
       searchQuery = decision.rewrittenQuery;
+      domain = decision.domain === "none" ? domain : decision.domain;
+    } else {
+      domain = "none";
     }
   }
 
@@ -72,6 +76,7 @@ export async function answerChatMessage(input: {
     ? await getLiveSearchContext({
         query: searchQuery,
         budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
+        domain,
       })
     : [];
   const autoSearched = mode === "auto" && searchQuery !== null;

@@ -36,3 +36,33 @@ export const USER_AGENT =
 //    context competing): a larger budget, since nothing else needs the room.
 export const LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG = 400;
 export const LIVE_SEARCH_TOKEN_BUDGET_STANDALONE = 700;
+
+// Preferred outlets per purpose domain (see searchDecision.service.ts).
+// Applied as a rerank-order bonus in liveSearch.service.ts — never a filter,
+// so an authoritative hit can outrank junk but junk is never dropped (the
+// best-effort fallback contract stays intact). Hostnames match by suffix, so
+// subdomains (e.g. finance.yahoo.com) count.
+export const DOMAIN_PREFERRED_OUTLETS: Record<string, string[]> = {
+  finance: [
+    "reuters.com",
+    "bloomberg.com",
+    "cnbc.com",
+    "finance.yahoo.com",
+    "marketwatch.com",
+    "ft.com",
+    "wsj.com",
+    "sec.gov",
+    "fool.com",
+  ],
+  people: ["linkedin.com", "theorg.com", "crunchbase.com", "signalhire.com"],
+  // tech/general have no universal outlet list (official docs vary per
+  // product) — the cross-encoder rerank already handles those well.
+  tech: [],
+  general: [],
+};
+
+// Office-document downloads almost never answer people/company questions
+// directly (verified: a departmental-approval .xlsx outranked real profiles
+// for a "who is" query). Demoted one tier when non-file candidates exist —
+// never dropped, since a filings PDF can be the right answer for finance.
+export const OFFICE_FILE_EXTENSIONS = [".xls", ".xlsx", ".doc", ".docx", ".ppt", ".pptx", ".csv"];

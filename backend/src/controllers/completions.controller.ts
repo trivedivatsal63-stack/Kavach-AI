@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { env } from "../config";
 import { getLiveSearchContext } from "../services/liveSearch/liveSearch.service";
+import { inferDomain } from "../services/liveSearch/searchDecision.service";
 import { formatWebContext } from "../services/liveSearch/webCitationFormat";
 import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constants";
 import { findUserByPresentedApiKey } from "../services/keys.service";
@@ -86,6 +87,7 @@ export async function completions(req: Request, res: Response) {
         ? await getLiveSearchContext({
             query,
             budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
+            domain: inferDomain(query),
           })
         : [];
       citations = webCitations;
