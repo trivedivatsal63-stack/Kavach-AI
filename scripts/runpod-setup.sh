@@ -158,6 +158,10 @@ fi
 # pull in searx's own runtime deps (confirmed live -- flask itself ended up
 # missing entirely, not just one stray package).
 /workspace/venvs/searxng/bin/pip install -r /workspace/searxng-src/requirements.txt
+# --no-build-isolation below needs the PEP 517 backend importable inside the
+# venv (Ubuntu 24.04 venvs ship pip without setuptools, so the editable
+# install fails with "Cannot import 'setuptools.build_meta'").
+/workspace/venvs/searxng/bin/pip install setuptools wheel
 /workspace/venvs/searxng/bin/pip install --use-pep517 --no-build-isolation -e /workspace/searxng-src
 # Optional uwsgi for production-style serving; supervisord uses searx.webapp
 # (simpler under process supervision). Install so both paths are available.
