@@ -33,36 +33,39 @@ if ! command -v node >/dev/null 2>&1 || ! node -v | grep -qE '^v(2[0-9]|[3-9][0-
 fi
 echo "    node $(node -v) / npm $(npm -v)"
 
-echo "==> [2/10] Postgres cluster under /var/lib/postgresql/pgdata"
+echo "==> [2/10] Postgres cluster under /workspace/pgdata (volume — survives stop/resume)"
 PG_VERSION="$(ls /usr/lib/postgresql | sort -V | tail -n1)"
 PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
+# Single source for the data dir: /var/lib/postgresql is container-ephemeral
+# and loses ALL user data on pod stop. Everything stateful lives on /workspace.
+PGDATA="/workspace/pgdata"
 ln -sfn "${PG_BIN}" /workspace/bin/pg_bin
-echo "    PostgreSQL ${PG_VERSION} → /workspace/bin/pg_bin"
+echo "    PostgreSQL ${PG_VERSION} → /workspace/bin/pg_bin (data: ${PGDATA})"
 
-if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
-  mkdir -p /var/lib/postgresql/pgdata
-  chown -R postgres:postgres /var/lib/postgresql/pgdata
-  su postgres -c "${PG_BIN}/initdb -D /var/lib/postgresql/pgdata --auth-local=peer --auth-host=scram-sha-256"
+if [[ ! -f "${PGDATA}/PG_VERSION" ]]; then
+  mkdir -p "${PGDATA}"
+  chown -R postgres:postgres "${PGDATA}"
+  su postgres -c "${PG_BIN}/initdb -D ${PGDATA} --auth-local=peer --auth-host=scram-sha-256"
   # Allow password auth from localhost (backend / litellm)
   {
     echo "listen_addresses = '127.0.0.1'"
     echo "port = 5432"
     echo "unix_socket_directories = '/var/run/postgresql'"
-  } >> /var/lib/postgresql/pgdata/postgresql.conf
+  } >> "${PGDATA}/postgresql.conf"
   # Ensure scram for TCP localhost
-  if ! grep -qE '^host\s+all\s+all\s+127\.0\.0\.1/32' /var/lib/postgresql/pgdata/pg_hba.conf; then
-    echo "host all all 127.0.0.1/32 scram-sha-256" >> /var/lib/postgresql/pgdata/pg_hba.conf
+  if ! grep -qE '^host\s+all\s+all\s+127\.0\.0\.1/32' "${PGDATA}/pg_hba.conf"; then
+    echo "host all all 127.0.0.1/32 scram-sha-256" >> "${PGDATA}/pg_hba.conf"
   fi
 fi
-chown -R postgres:postgres /var/lib/postgresql/pgdata
+chown -R postgres:postgres "${PGDATA}"
 mkdir -p /var/run/postgresql
 chown postgres:postgres /var/run/postgresql
 
 # One-time cluster + databases (password synced later by runpod-deploy.sh
 # once .env secrets exist — setup often runs before .env is filled).
-if [[ ! -f /var/lib/postgresql/pgdata/.kavach_initialized ]]; then
+if [[ ! -f "${PGDATA}/.kavach_initialized" ]]; then
   echo "    Creating databases (litellm, dashboard) via peer auth…"
-  su postgres -c "${PG_BIN}/pg_ctl -D /var/lib/postgresql/pgdata -l ${LOG_DIR}/postgres-init.log start"
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} -l ${LOG_DIR}/postgres-init.log start"
   sleep 2
 
   su postgres -c "${PG_BIN}/psql -d postgres -v ON_ERROR_STOP=1" <<'EOSQL'
@@ -72,8 +75,8 @@ SELECT 'CREATE DATABASE dashboard OWNER postgres'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dashboard')\gexec
 EOSQL
 
-  su postgres -c "${PG_BIN}/pg_ctl -D /var/lib/postgresql/pgdata stop"
-  touch /var/lib/postgresql/pgdata/.kavach_initialized
+  su postgres -c "${PG_BIN}/pg_ctl -D ${PGDATA} stop"
+  touch "${PGDATA}/.kavach_initialized"
   echo "    Postgres databases ready (password will be set on deploy)."
 else
   echo "    Postgres already initialized (skipping)."

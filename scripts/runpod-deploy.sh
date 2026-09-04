@@ -112,20 +112,26 @@ export DATABASE_URL LITELLM_DATABASE_URL LITELLM_BASE_URL VLLM_BASE_URL
 export FRONTEND_URL BACKEND_URL LITELLM_URL
 export HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
 
+# Fail fast if setup never initialized the volume data dir (wrong order).
+if [[ ! -f /workspace/pgdata/PG_VERSION ]]; then
+  echo "ERROR: /workspace/pgdata is not initialized — run ./scripts/runpod-setup.sh first."
+  exit 1
+fi
+
 # Sync Postgres role password to match .env (setup may have run before secrets existed)
 if [[ -x /workspace/bin/pg_bin/psql ]]; then
   echo "==> Syncing Postgres role password"
   # Start briefly via peer auth if not already up under supervisord
   if ! /workspace/bin/pg_bin/pg_isready -h /var/run/postgresql -q 2>/dev/null \
      && ! /workspace/bin/pg_bin/pg_isready -h 127.0.0.1 -q 2>/dev/null; then
-    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /var/lib/postgresql/pgdata -l "${LOG_DIR}/postgres-predeploy.log" start || true
+    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /workspace/pgdata -l "${LOG_DIR}/postgres-predeploy.log" start || true
     sleep 2
     STARTED_PG_FOR_SYNC=1
   fi
   runuser -u postgres -- /workspace/bin/pg_bin/psql -d postgres -v ON_ERROR_STOP=1 \
     -c "ALTER USER postgres WITH PASSWORD '${POSTGRES_PASSWORD//\'/\'\'}'" || true
   if [[ "${STARTED_PG_FOR_SYNC:-0}" == "1" ]]; then
-    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /var/lib/postgresql/pgdata stop || true
+    runuser -u postgres -- /workspace/bin/pg_bin/pg_ctl -D /workspace/pgdata stop || true
   fi
 fi
 
