@@ -112,6 +112,39 @@ export DATABASE_URL LITELLM_DATABASE_URL LITELLM_BASE_URL VLLM_BASE_URL
 export FRONTEND_URL BACKEND_URL LITELLM_URL
 export HF_HOME="${HF_HOME:-/workspace/.hf-cache}"
 
+# backend/.env is what node actually reads (dotenv loads CWD/backend/.env;
+# supervisord only injects service URLs). Derive it from the root .env so
+# there is a single source of truth — a hand-copied backend/.env with stale
+# model names or placeholder secrets silently breaks completions, master-key
+# calls and CORS. printf (not echo/heredoc) so $/backticks in secrets pass
+# through literally.
+echo "==> Syncing backend/.env from root .env"
+{
+  printf '%s=%s\n' "DATABASE_URL" "${DATABASE_URL}"
+  printf '%s=%s\n' "JWT_SECRET" "${JWT_SECRET}"
+  printf '%s=%s\n' "LITELLM_BASE_URL" "http://127.0.0.1:4000"
+  printf '%s=%s\n' "LITELLM_MASTER_KEY" "${LITELLM_MASTER_KEY}"
+  printf '%s=%s\n' "CHAT_MODEL" "${CHAT_MODEL:-mistral-small-24b-awq}"
+  printf '%s=%s\n' "RAG_CHAT_MODEL" "${RAG_CHAT_MODEL:-${CHAT_MODEL:-mistral-small-24b-awq}}"
+  printf '%s=%s\n' "MODEL_MAX_CONTEXT_TOKENS" "${MODEL_MAX_CONTEXT_TOKENS:-32768}"
+  printf '%s=%s\n' "QDRANT_URL" "http://127.0.0.1:6333"
+  printf '%s=%s\n' "EMBEDDING_BASE_URL" "http://127.0.0.1:8002"
+  printf '%s=%s\n' "EMBEDDING_MODEL" "${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}"
+  printf '%s=%s\n' "EMBEDDING_DIM" "${EMBEDDING_DIM:-384}"
+  printf '%s=%s\n' "SEARXNG_URL" "http://127.0.0.1:8889"
+  printf '%s=%s\n' "SUPERADMIN_EMAIL" "${SUPERADMIN_EMAIL:-}"
+  printf '%s=%s\n' "SMTP_HOST" "${SMTP_HOST:-}"
+  printf '%s=%s\n' "SMTP_PORT" "${SMTP_PORT:-587}"
+  printf '%s=%s\n' "SMTP_SECURE" "${SMTP_SECURE:-false}"
+  printf '%s=%s\n' "SMTP_USER" "${SMTP_USER:-}"
+  printf '%s=%s\n' "SMTP_PASS" "${SMTP_PASS:-}"
+  printf '%s=%s\n' "SMTP_FROM" "${SMTP_FROM:-}"
+  printf '%s=%s\n' "SMTP_TLS_INSECURE" "${SMTP_TLS_INSECURE:-}"
+  printf '%s=%s\n' "PORT" "4001"
+  printf '%s=%s\n' "CORS_ORIGIN" "${CORS_ORIGIN}"
+} > "${REPO_ROOT}/backend/.env"
+echo "    backend/.env synced"
+
 # Fail fast if setup never initialized the cluster (wrong order).
 if [[ ! -f /var/lib/postgresql/pgdata/PG_VERSION ]]; then
   echo "ERROR: Postgres cluster not initialized — run ./scripts/runpod-setup.sh first."
