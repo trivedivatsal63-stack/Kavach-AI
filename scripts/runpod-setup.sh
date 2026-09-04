@@ -138,7 +138,10 @@ fi
 /workspace/venvs/litellm/bin/pip install 'prisma>=0.11'
 LITELLM_SCHEMA="$(find /workspace/venvs/litellm/lib -name schema.prisma -path '*litellm*' 2>/dev/null | head -n1)"
 if [[ -n "${LITELLM_SCHEMA}" ]]; then
-  /workspace/venvs/litellm/bin/prisma generate --schema "${LITELLM_SCHEMA}"
+  # The prisma CLI spawns the prisma-client-py generator via PATH lookup,
+  # so the venv bin must be on PATH (absolute-path invocation alone fails
+  # with "prisma-client-py: not found" — confirmed live).
+  PATH="/workspace/venvs/litellm/bin:${PATH}" /workspace/venvs/litellm/bin/prisma generate --schema "${LITELLM_SCHEMA}"
 else
   echo "    WARNING: litellm schema.prisma not found — proxy DB startup will fail."
 fi
