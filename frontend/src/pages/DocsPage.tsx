@@ -4,7 +4,7 @@ import { CodeBlock } from "../components/CodeBlock";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4001";
-const MODEL_NAME = "muse-glimmer-30b-awq";
+const MODEL_NAME = "mistral-small-24b-awq";
 
 const curlExample = `curl ${API_BASE_URL}/v1/chat/completions \\
   -H "Authorization: Bearer <your-api-key>" \\
@@ -25,7 +25,7 @@ client = OpenAI(
 response = client.chat.completions.create(
     model="${MODEL_NAME}",
     messages=[{"role": "user", "content": "Say hello in one sentence."}],
-    extra_body={"web_search": False},  # True grounds the answer with live web results
+    extra_body={"web_search": "auto"},  # auto = model decides + rewrites; True forces, False never
 )
 
 print(response.choices[0].message.content)`;
@@ -143,12 +143,27 @@ export function DocsPage() {
 
         <div className="space-y-4">
           <div>
-            <h2 className="text-lg font-semibold">Live web search</h2>
+            <h2 className="text-lg font-semibold">Agentic web search</h2>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Set <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">web_search: true</code>{" "}
-              on any request to ground the answer with real, live-fetched web
-              results — self-hosted (no third-party search API), and never
-              triggered automatically. Off by default.
+              Every API key ships with agentic search — no setup.{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">web_search</code>{" "}
+              accepts <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">true</code>{" "}
+              (always search),{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">false</code>{" "}
+              (never), or{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">&quot;auto&quot;</code>{" "}
+              (the default when omitted — the model decides per question and
+              rewrites it into a purpose-built query: tickers + recency for
+              markets, exact quoted names for people, docs context for tech).
+              Results are self-hosted SearXNG (no third-party search API),
+              reranked, weighted toward authoritative outlets per domain, and
+              returned as <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">citations</code>{" "}
+              alongside the standard OpenAI response. Search spend lands on
+              the calling key&apos;s budget, visible per key on the dashboard.
+              Advanced callers may also pass their own{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">tools</code>/
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-[13px] dark:bg-neutral-800">tool_choice</code>{" "}
+              — they are forwarded untouched to the model.
             </p>
           </div>
           <div className="card overflow-hidden">
