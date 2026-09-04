@@ -1,8 +1,10 @@
 import { retrieve } from "./retrieval.service";
-import { completeChat } from "./completion.service";
+import { completeChat, completeChatStream } from "./completion.service";
+import type { PhaseCallback } from "../pipelinePhases";
 import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./tokenizer.service";
 import { formatContext } from "./citationFormat";
 import { getLiveSearchContext } from "../liveSearch/liveSearch.service";
+import { decideSearchNeed } from "../liveSearch/searchDecision.service";
 import { formatWebContext } from "../liveSearch/webCitationFormat";
 import { RAG_HISTORY_TOKEN_BUDGET } from "../../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG } from "../../utils/liveSearch.constants";
@@ -86,12 +88,32 @@ export async function answerQuestion(input: {
    * question. Optional — omitted/empty for the public /v1/rag/query API,
    * which has no conversation concept. */
   history?: HistoryTurn[];
-  /** Explicit opt-in only — never triggered automatically. See
-   * services/liveSearch/ for why: this model is too small to reliably
-   * decide on its own when it needs current information. */
-  webSearch?: boolean;
+  /** true = always search with the raw question. 'auto' = model decides IF
+   * search is needed + rewrites the query from history. false = never. */
+  webSearch?: boolean | "auto";
+  /** Real-step progress callback for the SSE status timeline. */
+  onPhase?: PhaseCallback;
+  /** Token deltas for live streaming (with signal, streams via LiteLLM SSE). */
+  onToken?: (delta: string) => void;
+  signal?: AbortSignal;
 }): Promise<RagChatResult> {
-  const webSearch = input.webSearch ?? false;
+  const mode = input.webSearch ?? "auto";
+
+  let searchQuery: string | null = null;
+  if (mode === true) {
+    searchQuery = input.question;
+  } else if (mode === "auto") {
+    await input.onPhase?.("routing");
+    const decision = await decideSearchNeed({
+      apiKey: input.apiKey,
+      question: input.question,
+      history: input.history ?? [],
+    });
+    if (decision.needSearch && decision.rewrittenQuery) {
+      searchQuery = decision.rewrittenQuery;
+    }
+  }
+  const webSearch = searchQuery !== null;
 
   // What retrieve()'s token-budget cutoff needs to know: how many tokens
   // this call's prompt scaffolding already commits, before any chunk content
@@ -114,9 +136,11 @@ export async function answerQuestion(input: {
   // token cost can be folded into reservedTokens up front — retrieve()'s own
   // budget walk needs to know everything already spoken for, not just
   // history/system/question, or it could still overflow the window.
-  const webCitations = webSearch
+  // searchQuery is the rewritten form when mode='auto', raw when forced.
+  if (searchQuery) await input.onPhase?.("searching");
+  const webCitations = searchQuery
     ? await getLiveSearchContext({
-        query: input.question,
+        query: searchQuery,
         budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
       })
     : [];
@@ -125,6 +149,7 @@ export async function answerQuestion(input: {
 
   const reservedTokens = systemTokens + wrapperTokens + historyTokens + webContextTokens;
 
+  await input.onPhase?.("retrieving");
   const citations: Citation[] = await retrieve({
     userId: input.userId,
     query: input.question,
@@ -150,7 +175,22 @@ export async function answerQuestion(input: {
     webCitations.length > 0 ? formatWebContext(webCitations, citations.length) : "";
   const context = [docContext, webContext].filter(Boolean).join("\n\n");
 
-  const completion = await completeChat(input.apiKey, [
+  await input.onPhase?.("generating");
+  const completion =
+    input.onToken || input.signal
+      ? await completeChatStream(
+          input.apiKey,
+          [
+            {
+              role: "system",
+              content: webSearch ? SYSTEM_PROMPT + WEB_SEARCH_ADDENDUM : SYSTEM_PROMPT,
+            },
+            ...trimmedHistory,
+            { role: "user", content: `Context:\n${context}\n\nQuestion:\n${input.question}` },
+          ],
+          { onDelta: input.onToken, signal: input.signal }
+        )
+      : await completeChat(input.apiKey, [
     {
       role: "system",
       content: webSearch ? SYSTEM_PROMPT + WEB_SEARCH_ADDENDUM : SYSTEM_PROMPT,

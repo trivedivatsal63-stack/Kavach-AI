@@ -7,11 +7,12 @@
 # attention-backend workarounds needed (all of that was specific to the
 # previous pod's older driver, CUDA 12.8 ceiling).
 #
-# Serving cyankiwi/Muse-Glimmer-30B-AWQ-INT4: dense 29.6B + ViT-G/14, compressed-tensors
-# W4A16 pack-quantized (group 32, asymmetric). No --quantization flag (auto).
-# Requires vLLM nightly with PR 51655 (muse_glimmer model + parsers).
-# Channel format: to=self reasoning, ATEM tool calls — needs both parsers + generation-config auto.
-# Conservative concurrency: max_num_seqs 4 for 131K on 48GB A6000; nightly default would be 16.
+# Serving stelterlab/Mistral-Small-24B-Instruct-2501-AWQ: 24B dense, AutoAWQ
+# INT4 GEMM (~14-16GB, Apache-2.0). No --quantization flag (auto-detected).
+# Tool calls via --tool-call-parser mistral + --tokenizer-mode mistral.
+# AWQ repo misses tekken.json so --tokenizer points at the original Mistral
+# repo (verified community workaround). Non-reasoning model: no
+# --reasoning-parser flag. Mistral recommends low temperature at call time.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,13 +32,13 @@ export PATH="/workspace/venvs/vllm/bin:${PATH}"
 
 exec /workspace/venvs/vllm/bin/vllm serve "${VLLM_MODEL}" \
   --served-model-name "${VLLM_SERVED_NAME}" \
+  --tokenizer mistralai/Mistral-Small-24B-Instruct-2501 \
+  --tokenizer-mode mistral \
   --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
   --max-model-len "${VLLM_MAX_MODEL_LEN}" \
   --max-num-seqs "${VLLM_MAX_NUM_SEQS}" \
   --enable-auto-tool-choice \
-  --tool-call-parser muse_glimmer \
-  --reasoning-parser muse_glimmer \
-  --generation-config auto \
+  --tool-call-parser mistral \
   --dtype auto \
   --host 0.0.0.0 \
   --port 8000

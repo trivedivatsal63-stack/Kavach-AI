@@ -323,10 +323,10 @@ export function AdminPage() {
                         >
                           <div className="min-w-0">
                             <p className="font-medium">
-                              {k.kind === "rag" ? k.name || "RAG key" : "API key"}
+                              {k.name || (k.kind === "rag" ? "RAG key" : "API key")}
                             </p>
                             <p className="truncate font-mono text-[11px] text-gray-400">
-                              {k.id}
+                              {k.keyPrefix || k.id}
                             </p>
                             <p className="text-xs text-gray-500">
                               ${k.totalSpend.toFixed(4)} · {k.totalRequests}{" "}

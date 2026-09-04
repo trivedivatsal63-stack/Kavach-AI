@@ -63,6 +63,13 @@ model ApiKey {
   userId       String
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   litellmKeyId String    @unique
+  // Human label shown in the dashboard (OpenAI-style key management).
+  name         String    @default("API key")
+  // Non-secret identifier (e.g. sk-…Ab12) so revoked/expired keys stay
+  // distinguishable after the one-time reveal. Plaintext is never stored.
+  keyPrefix    String    @default("")
+  // Null = never expires. LiteLLM enforces this natively at request time.
+  expiresAt    DateTime?
   createdAt    DateTime  @default(now())
   revokedAt    DateTime?
 

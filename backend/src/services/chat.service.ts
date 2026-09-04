@@ -1,10 +1,12 @@
-import { completeChat, type ChatMessage } from "./rag/completion.service";
+import { completeChat, completeChatStream, type ChatMessage } from "./rag/completion.service";
 import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./rag/tokenizer.service";
 import { getLiveSearchContext } from "./liveSearch/liveSearch.service";
+import { decideSearchNeed } from "./liveSearch/searchDecision.service";
 import { formatWebContext } from "./liveSearch/webCitationFormat";
 import type { WebCitation } from "./liveSearch/types";
 import { CHAT_HISTORY_TOKEN_BUDGET } from "../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constants";
+import type { PhaseCallback } from "./pipelinePhases";
 
 // General-purpose (non-RAG) conversational chat — no retrieval, no document
 // grounding, just a normal multi-turn conversation against the model. Spend
@@ -33,19 +35,43 @@ export async function answerChatMessage(input: {
   question: string;
   /** Prior turns, oldest-first, excluding the new question. */
   history: HistoryTurn[];
-  /** Explicit opt-in only — never triggered automatically. See
-   * services/liveSearch/ for why: this model is too small to reliably
-   * decide on its own when it needs current information. */
-  webSearch?: boolean;
+  /** true = always search with the raw question.
+   *  'auto' (or undefined on conversational paths) = model decides IF
+   *  search is needed and rewrites the query from history. false = never. */
+  webSearch?: boolean | "auto";
+  /** Real-step progress callback for the SSE status timeline. Each phase
+   * fires exactly when that work starts — never synthetic. */
+  onPhase?: PhaseCallback;
+  /** Token deltas for live streaming. When present (with signal), the
+   * answer streams via LiteLLM SSE instead of one blocking call. */
+  onToken?: (delta: string) => void;
+  signal?: AbortSignal;
 }): Promise<ChatResult> {
-  const webSearch = input.webSearch ?? false;
+  const mode = input.webSearch ?? "auto";
 
-  const webCitations = webSearch
+  let searchQuery: string | null = null;
+  if (mode === true) {
+    searchQuery = input.question;
+  } else if (mode === "auto") {
+    await input.onPhase?.("routing");
+    const decision = await decideSearchNeed({
+      apiKey: input.apiKey,
+      question: input.question,
+      history: input.history,
+    });
+    if (decision.needSearch && decision.rewrittenQuery) {
+      searchQuery = decision.rewrittenQuery;
+    }
+  }
+
+  if (searchQuery) await input.onPhase?.("searching");
+  const webCitations = searchQuery
     ? await getLiveSearchContext({
-        query: input.question,
+        query: searchQuery,
         budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
       })
     : [];
+  const autoSearched = mode === "auto" && searchQuery !== null;
   const webContextTokens =
     webCitations.length > 0 ? await countTokens(formatWebContext(webCitations)) : 0;
 
@@ -68,11 +94,22 @@ export async function answerChatMessage(input: {
   }
   messages.push(...trimmedHistory, { role: "user", content: input.question });
 
-  const completion = await completeChat(input.apiKey, messages);
+  await input.onPhase?.("generating");
+  const completion =
+    input.onToken || input.signal
+      ? await completeChatStream(input.apiKey, messages, {
+          onDelta: input.onToken,
+          signal: input.signal,
+        })
+      : await completeChat(input.apiKey, messages);
 
+  // Preserve the old contract: forced=true always returns the array (even
+  // empty); auto returns it only when a search actually ran, else undefined.
+  const returnWebCitations =
+    mode === true ? webCitations : autoSearched ? webCitations : undefined;
   return {
     answer: completion.content,
-    webCitations: webSearch ? webCitations : undefined,
+    webCitations: returnWebCitations,
     usage: {
       promptTokens: completion.promptTokens,
       completionTokens: completion.completionTokens,

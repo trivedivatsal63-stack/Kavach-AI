@@ -136,7 +136,7 @@ export function DocumentChunkBrowser({
                                 onClick={() => setSelectedChunk(c)}
                                 className={`block w-full truncate rounded-lg px-3 py-1.5 text-left text-xs transition-colors ${
                                   selectedChunk?.id === c.id
-                                    ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400"
+                                    ? "bg-gray-200 text-gray-900 dark:bg-neutral-700 dark:text-white"
                                     : "text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-neutral-800/60"
                                 }`}
                               >

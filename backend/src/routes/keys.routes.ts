@@ -7,4 +7,5 @@ export const keysRouter = Router();
 keysRouter.post("/test", requireAuth, requireActiveAccount, keysController.test);
 keysRouter.post("/", requireAuth, requireActiveAccount, keysController.create);
 keysRouter.get("/", requireAuth, keysController.list);
+keysRouter.put("/:id", requireAuth, requireActiveAccount, keysController.rename);
 keysRouter.delete("/:id", requireAuth, keysController.revoke);

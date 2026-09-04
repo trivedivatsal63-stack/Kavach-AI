@@ -3,12 +3,16 @@ import { Link } from "react-router-dom";
 import {
   listKeys,
   generateKey,
+  renameKey,
   revokeKey,
   getUsage,
   topUp,
   testKey,
   ApiError,
+  KEY_EXPIRY_PRESETS,
+  expiryIsoFromDays,
   type ApiKeySummary,
+  type KeyStatus,
   type UsageRow,
   type TestKeyResponse,
 } from "../lib/api";
@@ -23,6 +27,11 @@ export function DashboardPage() {
   const [keys, setKeys] = useState<ApiKeySummary[]>([]);
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [revealedMeta, setRevealedMeta] = useState<{
+    name: string;
+    keyPrefix: string;
+    expiresAt: string | null;
+  } | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,6 +39,16 @@ export function DashboardPage() {
   const [testResult, setTestResult] = useState<TestKeyResponse | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testPending, setTestPending] = useState(false);
+  // Generate modal
+  const [showGenerate, setShowGenerate] = useState(false);
+  const [keyName, setKeyName] = useState("");
+  const [expiryDays, setExpiryDays] = useState<number | null>(30);
+  // Inline rename + revoke confirm
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [revokeTarget, setRevokeTarget] = useState<ApiKeySummary | null>(null);
+
+  const spendByKeyId = new Map(usage.map((u) => [u.keyId, u]));
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -54,13 +73,42 @@ export function DashboardPage() {
     setTestResult(null);
     setTestError(null);
     try {
-      const result = await generateKey(token);
+      const trimmed = keyName.trim();
+      const result = await generateKey(token, {
+        ...(trimmed ? { name: trimmed } : {}),
+        ...(expiryDays != null ? { expiresAt: expiryIsoFromDays(expiryDays) as string } : {}),
+      });
       setRevealedKey(result.key);
+      setRevealedMeta({
+        name: result.name,
+        keyPrefix: result.keyPrefix,
+        expiresAt: result.expiresAt,
+      });
+      setShowGenerate(false);
+      setKeyName("");
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to generate key.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleRename(id: string) {
+    if (!token) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      setRenamingId(null);
+      return;
+    }
+    setError(null);
+    try {
+      const updated = await renameKey(token, id, trimmed);
+      setKeys((prev) => prev.map((k) => (k.id === id ? { ...k, name: updated.name } : k)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to rename key.");
+    } finally {
+      setRenamingId(null);
     }
   }
 
@@ -70,6 +118,7 @@ export function DashboardPage() {
     setBusy(true);
     try {
       await revokeKey(token, id);
+      setRevokeTarget(null);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to revoke key.");
@@ -116,6 +165,39 @@ export function DashboardPage() {
 
   const activeKeys = keys.filter((k) => !k.revokedAt).length;
   const totalSpend = usage.reduce((sum, row) => sum + row.totalSpend, 0);
+
+  function statusBadgeVariant(status: KeyStatus): "success" | "warning" | "danger" | "info" {
+    switch (status) {
+      case "active":
+        return "success";
+      case "expiring-soon":
+        return "warning";
+      case "expired":
+      case "revoked":
+        return "danger";
+    }
+  }
+
+  function statusLabel(status: KeyStatus): string {
+    switch (status) {
+      case "active":
+        return "Active";
+      case "expiring-soon":
+        return "Expiring soon";
+      case "expired":
+        return "Expired";
+      case "revoked":
+        return "Revoked";
+    }
+  }
+
+  function expiryText(expiresAt: string | null): string {
+    if (!expiresAt) return "Never expires";
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (ms <= 0) return `Expired ${new Date(expiresAt).toLocaleDateString()}`;
+    const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
+    return days === 1 ? "Expires tomorrow" : `Expires in ${days} days`;
+  }
 
   if (loading || !user) {
     return (
@@ -213,11 +295,11 @@ export function DashboardPage() {
                 Test an API key
               </Link>
               <button
-                onClick={handleGenerate}
+                onClick={() => setShowGenerate(true)}
                 disabled={busy}
                 className="btn-primary"
               >
-                {busy ? "Working…" : "Generate new key"}
+                Generate new key
               </button>
             </div>
           </div>
@@ -225,6 +307,13 @@ export function DashboardPage() {
           {revealedKey && (
             <div className="border-b border-amber-200/60 bg-amber-50/60 p-5 dark:border-amber-900/40 dark:bg-amber-950/20">
               <p className="text-sm font-medium">
+                {revealedMeta?.name ?? "New key"} ·{" "}
+                <span className="font-mono text-xs">{revealedMeta?.keyPrefix}</span>
+                {revealedMeta?.expiresAt
+                  ? ` · expires ${new Date(revealedMeta.expiresAt).toLocaleDateString()}`
+                  : " · never expires"}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                 Copy this key now — you won&apos;t be able to see it again.
               </p>
               <div className="mt-2 flex items-center gap-2">
@@ -244,6 +333,15 @@ export function DashboardPage() {
                 >
                   {testPending ? "Testing…" : "Test this key"}
                 </button>
+                <button
+                  onClick={() => {
+                    setRevealedKey(null);
+                    setRevealedMeta(null);
+                  }}
+                  className="btn-ghost"
+                >
+                  Dismiss
+                </button>
               </div>
               {(testResult || testError) && (
                 <div className="mt-3">
@@ -259,37 +357,169 @@ export function DashboardPage() {
                 No API keys yet. Generate your first one above.
               </li>
             )}
-            {keys.map((k) => (
-              <li
-                key={k.id}
-                className="flex items-center justify-between gap-4 p-4 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-mono text-xs text-gray-500 dark:text-gray-400">
-                    {k.id}
-                  </p>
-                  <p className="mt-1">
-                    Created {new Date(k.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <Badge variant={k.revokedAt ? "danger" : "success"}>
-                    {k.revokedAt ? "Revoked" : "Active"}
-                  </Badge>
-                  {!k.revokedAt && (
-                    <button
-                      onClick={() => void handleRevoke(k.id)}
-                      disabled={busy}
-                      className="btn-danger"
-                    >
-                      Revoke
-                    </button>
-                  )}
-                </div>
-              </li>
-            ))}
+            {keys.map((k) => {
+              const spend = spendByKeyId.get(k.id)?.totalSpend;
+              return (
+                <li
+                  key={k.id}
+                  className="flex items-center justify-between gap-4 p-4 text-sm"
+                >
+                  <div className="min-w-0 flex-1">
+                    {renamingId === k.id ? (
+                      <input
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value.slice(0, 60))}
+                        onBlur={() => void handleRename(k.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleRename(k.id);
+                          if (e.key === "Escape") setRenamingId(null);
+                        }}
+                        autoFocus
+                        className="input max-w-xs py-1 text-sm"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (k.status === "revoked") return;
+                          setRenamingId(k.id);
+                          setRenameValue(k.name);
+                        }}
+                        title={k.status === "revoked" ? k.name : "Click to rename"}
+                        className="truncate font-medium text-gray-900 dark:text-gray-100"
+                      >
+                        {k.name}
+                      </button>
+                    )}
+                    <p className="mt-0.5 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
+                      {k.keyPrefix || k.id}
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
+                      Created {new Date(k.createdAt).toLocaleDateString()} ·{" "}
+                      {expiryText(k.expiresAt)}
+                      {spend != null && spend > 0 && (
+                        <> · ${spend.toFixed(4)} spent</>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <Badge variant={statusBadgeVariant(k.status)}>
+                      {statusLabel(k.status)}
+                    </Badge>
+                    {(k.status === "active" || k.status === "expiring-soon") && (
+                      <button
+                        onClick={() => setRevokeTarget(k)}
+                        disabled={busy}
+                        className="btn-danger"
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
+
+        {/* Generate modal */}
+        {showGenerate && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => !busy && setShowGenerate(false)}
+          >
+            <div
+              className="card w-full max-w-md p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-base font-semibold">Generate API key</h2>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                Named, optionally expiring, shown once.
+              </p>
+              <label className="label mt-4" htmlFor="key-name">
+                Name
+              </label>
+              <input
+                id="key-name"
+                value={keyName}
+                onChange={(e) => setKeyName(e.target.value.slice(0, 60))}
+                placeholder="e.g. Production server"
+                className="input"
+                autoFocus
+              />
+              <p className="label mt-4">Expires</p>
+              <div className="flex flex-wrap gap-2">
+                {KEY_EXPIRY_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => setExpiryDays(p.days)}
+                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      expiryDays === p.days
+                        ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900"
+                        : "border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-neutral-700 dark:text-gray-300 dark:hover:bg-neutral-800"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  onClick={() => setShowGenerate(false)}
+                  disabled={busy}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleGenerate}
+                  disabled={busy}
+                  className="btn-primary"
+                >
+                  {busy ? "Generating…" : "Generate key"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Revoke confirm */}
+        {revokeTarget && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={() => !busy && setRevokeTarget(null)}
+          >
+            <div
+              className="card w-full max-w-sm p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-base font-semibold">Revoke key?</h2>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <span className="font-medium text-gray-900 dark:text-gray-100">
+                  {revokeTarget.name}
+                </span>{" "}
+                <span className="font-mono text-xs">{revokeTarget.keyPrefix}</span>{" "}
+                will stop working immediately. This cannot be undone.
+              </p>
+              <div className="mt-6 flex justify-end gap-2">
+                <button
+                  onClick={() => setRevokeTarget(null)}
+                  disabled={busy}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleRevoke(revokeTarget.id)}
+                  disabled={busy}
+                  className="btn-danger px-4 py-2"
+                >
+                  {busy ? "Revoking…" : "Revoke key"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Usage */}
         <div className="card overflow-hidden">

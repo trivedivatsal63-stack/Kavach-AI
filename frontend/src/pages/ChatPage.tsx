@@ -7,6 +7,7 @@ import { MessageThread } from "../components/chat/MessageThread";
 import { Composer } from "../components/chat/Composer";
 import { useAuth } from "../context/AuthContext";
 import { useConversation } from "../hooks/useConversation";
+import { ChatIcon, DocIcon, GlobeIcon, KeyIcon } from "../components/icons";
 
 export function ChatPage() {
   const { token } = useAuth();
@@ -15,12 +16,15 @@ export function ChatPage() {
     activeId,
     messages,
     sending,
+    streamPhases,
+    streamingText,
+    stopStreaming,
     error,
     selectConversation,
     startComposing,
     startNewConversation,
     deleteConversation,
-    sendMessage,
+    sendMessageStream,
   } = useConversation(token, "chat");
 
   const [draft, setDraft] = useState("");
@@ -35,10 +39,10 @@ export function ChatPage() {
     if (!activeId) {
       const conversation = await startNewConversation();
       if (!conversation) return;
-      await sendMessage(content, conversation.id, useWebSearch);
+      await sendMessageStream(content, conversation.id, useWebSearch);
       return;
     }
-    await sendMessage(content, undefined, useWebSearch);
+    await sendMessageStream(content, undefined, useWebSearch);
   }
 
   return (
@@ -69,20 +73,17 @@ export function ChatPage() {
               subtitle="Ask anything, ground answers in your documents, or search the live web — all on infrastructure you control."
               actions={[
                 {
-                  icon: "💬",
-                  chipColor: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
+                  icon: <ChatIcon />,
                   label: "Ask a question",
                   onClick: () => startComposing(),
                 },
                 {
-                  icon: "📄",
-                  chipColor: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+                  icon: <DocIcon />,
                   label: "Search my documents",
                   onClick: () => (window.location.href = "/rag"),
                 },
                 {
-                  icon: "🌐",
-                  chipColor: "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-400",
+                  icon: <GlobeIcon />,
                   label: "Search the web",
                   onClick: () => {
                     startComposing();
@@ -90,8 +91,7 @@ export function ChatPage() {
                   },
                 },
                 {
-                  icon: "🔑",
-                  chipColor: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400",
+                  icon: <KeyIcon />,
                   label: "Get an API key",
                   onClick: () => (window.location.href = "/rag?view=keys"),
                 },
@@ -101,8 +101,11 @@ export function ChatPage() {
             <MessageThread
               messages={messages}
               sending={sending}
+              streamPhases={streamPhases}
+              streamingText={streamingText}
               emptyTitle="Start a conversation"
               emptyBody="Ask anything — this is a general-purpose chat against the model, no documents involved."
+              onRetry={(c) => void sendMessageStream(c, activeId ?? undefined, webSearch)}
             />
           )}
 
@@ -111,6 +114,8 @@ export function ChatPage() {
             onChange={setDraft}
             onSubmit={() => void handleSend()}
             disabled={sending}
+            streaming={sending}
+            onStop={stopStreaming}
             placeholder="Message Harrier…"
             webSearch={webSearch}
             onToggleWebSearch={() => setWebSearch((v) => !v)}

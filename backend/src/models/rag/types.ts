@@ -37,6 +37,8 @@ export interface RagKeyRow {
   name: string;
   keyHash: string;
   tokenId: string;
+  keyPrefix: string;
+  expiresAt: Date | null;
   createdAt: Date;
   revokedAt: Date | null;
 }
