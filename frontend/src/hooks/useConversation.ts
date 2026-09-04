@@ -33,6 +33,13 @@ export function useConversation(token: string | null, mode: ConversationMode) {
   const [streamingText, setStreamingText] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const streamingConvRef = useRef<string | null>(null);
+  // Guards against out-of-order async completion scrambling threads:
+  // - activeIdRef: message-list mutations from a send only apply while its
+  //   conversation is still the visible one (switching mid-flight no longer
+  //   grafts one conversation's turns onto another's thread).
+  // - loadSeqRef: only the latest selectConversation load may set messages.
+  const activeIdRef = useRef<string | null>(null);
+  const loadSeqRef = useRef(0);
 
   const refreshList = useCallback(async () => {
     if (!token) return;
@@ -47,18 +54,33 @@ export function useConversation(token: string | null, mode: ConversationMode) {
   const selectConversation = useCallback(
     async (id: string) => {
       if (!token) return;
+      // Leaving a conversation aborts its in-flight stream (the server
+      // persists the partial; it will be there when the user returns) and
+      // clears live state so no other thread inherits this one's timeline.
+      abortRef.current?.abort();
+      abortRef.current = null;
+      streamingConvRef.current = null;
+      setStreamPhases([]);
+      setStreamingText("");
+      setSending(false);
+      const seq = ++loadSeqRef.current;
+      activeIdRef.current = id;
       setActiveId(id);
       setLoadingMessages(true);
       setError(null);
       try {
         const { conversation } = await getConversation(token, id);
+        if (loadSeqRef.current !== seq || activeIdRef.current !== id) return;
         setMessages(conversation.messages);
       } catch (err) {
+        if (loadSeqRef.current !== seq || activeIdRef.current !== id) return;
         setError(
           err instanceof ApiError ? err.message : "Failed to load conversation."
         );
       } finally {
-        setLoadingMessages(false);
+        if (loadSeqRef.current === seq && activeIdRef.current === id) {
+          setLoadingMessages(false);
+        }
       }
     },
     [token]
@@ -71,6 +93,14 @@ export function useConversation(token: string | null, mode: ConversationMode) {
   // sidebar with empty conversations. RAG Studio uses this same reset to
   // show its document-scope picker before a conversation exists.
   const startComposing = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    streamingConvRef.current = null;
+    setStreamPhases([]);
+    setStreamingText("");
+    setSending(false);
+    loadSeqRef.current++;
+    activeIdRef.current = null;
     setActiveId(null);
     setMessages([]);
     setError(null);
@@ -81,6 +111,8 @@ export function useConversation(token: string | null, mode: ConversationMode) {
       if (!token) return;
       const { conversation } = await createConversation(token, mode, documentIds);
       setConversations((prev) => [conversation, ...prev]);
+      loadSeqRef.current++;
+      activeIdRef.current = conversation.id;
       setActiveId(conversation.id);
       setMessages([]);
       setError(null);
@@ -111,6 +143,9 @@ export function useConversation(token: string | null, mode: ConversationMode) {
     async (content: string, targetId?: string, webSearch?: boolean) => {
       const conversationId = targetId ?? activeId;
       if (!token || !conversationId || sending) return;
+      // Message-list mutations below only apply while this conversation is
+      // still visible; the sidebar list update is global and unguarded.
+      const stillActive = () => activeIdRef.current === conversationId;
       setError(null);
       const optimisticId = crypto.randomUUID();
       setMessages((m) => [
@@ -125,6 +160,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
           content,
           webSearch
         );
+        if (!stillActive()) return;
         setMessages((m) => [
           ...m.filter((msg) => msg.id !== optimisticId),
           result.userMessage,
@@ -136,6 +172,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
             .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
         );
       } catch (err) {
+        if (!stillActive()) return;
         setMessages((m) => [
           ...m,
           {
@@ -147,7 +184,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
           },
         ]);
       } finally {
-        setSending(false);
+        if (stillActive()) setSending(false);
       }
     },
     [token, activeId, sending]
@@ -162,6 +199,10 @@ export function useConversation(token: string | null, mode: ConversationMode) {
     async (content: string, targetId?: string, webSearch?: boolean) => {
       const conversationId = targetId ?? activeId;
       if (!token || !conversationId || sending) return;
+      // Same still-active guard as sendMessage: late SSE events, the done
+      // payload, and the abort-reload must never mutate another
+      // conversation's visible thread. Sidebar list updates stay global.
+      const stillActive = () => activeIdRef.current === conversationId;
       setError(null);
       const optimisticId = crypto.randomUUID();
       setMessages((m) => [
@@ -174,11 +215,13 @@ export function useConversation(token: string | null, mode: ConversationMode) {
       const aborter = new AbortController();
       abortRef.current = aborter;
       streamingConvRef.current = conversationId;
-      const pushErrorBubble = (message: string) =>
+      const pushErrorBubble = (message: string) => {
+        if (!stillActive()) return;
         setMessages((m) => [
           ...m,
           { id: crypto.randomUUID(), role: "assistant", content: message, error: true },
         ]);
+      };
       try {
         const result = await sendConversationMessageStream(
           token,
@@ -186,12 +229,18 @@ export function useConversation(token: string | null, mode: ConversationMode) {
           content,
           webSearch,
           {
-            onPhase: (phase) =>
-              setStreamPhases((prev) => (prev.includes(phase) ? prev : [...prev, phase])),
-            onToken: (delta) => setStreamingText((prev) => prev + delta),
+            onPhase: (phase) => {
+              if (!stillActive()) return;
+              setStreamPhases((prev) => (prev.includes(phase) ? prev : [...prev, phase]));
+            },
+            onToken: (delta) => {
+              if (!stillActive()) return;
+              setStreamingText((prev) => prev + delta);
+            },
           },
           aborter.signal
         );
+        if (!stillActive()) return;
         setMessages((m) => [
           ...m.filter((msg) => msg.id !== optimisticId),
           result.userMessage,
@@ -204,14 +253,18 @@ export function useConversation(token: string | null, mode: ConversationMode) {
         );
       } catch (err) {
         if (aborter.signal.aborted) {
-          // Intentional Stop: the server persisted the partial on
-          // disconnect. Reload to pick it up (replaces the optimistic
-          // message and any streamed text with the persisted rows).
+          // Stop (button or conversation switch): the server persisted the
+          // partial on disconnect. Reload only if this conversation is
+          // still the visible one — otherwise its thread is already correct
+          // and will load the partial on next open.
+          if (!stillActive()) return;
           setStreamPhases([]);
           setStreamingText("");
           try {
             await new Promise((r) => setTimeout(r, 600));
+            if (!stillActive()) return;
             const { conversation } = await getConversation(token, conversationId);
+            if (!stillActive()) return;
             setMessages(conversation.messages);
           } catch {
             pushErrorBubble("Stopped. Reload the conversation to see the partial reply.");
@@ -219,6 +272,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
         } else if (err instanceof ApiError && err.status === 404) {
           // Stream endpoint missing — retry classically with the optimistic
           // message already in place.
+          if (!stillActive()) return;
           setStreamPhases([]);
           try {
             const result = await sendConversationMessage(
@@ -227,6 +281,7 @@ export function useConversation(token: string | null, mode: ConversationMode) {
               content,
               webSearch
             );
+            if (!stillActive()) return;
             setMessages((m) => [
               ...m.filter((msg) => msg.id !== optimisticId),
               result.userMessage,
@@ -249,9 +304,11 @@ export function useConversation(token: string | null, mode: ConversationMode) {
           );
         }
       } finally {
-        setSending(false);
-        setStreamPhases([]);
-        setStreamingText("");
+        if (stillActive()) {
+          setSending(false);
+          setStreamPhases([]);
+          setStreamingText("");
+        }
         if (abortRef.current === aborter) abortRef.current = null;
         streamingConvRef.current = null;
       }

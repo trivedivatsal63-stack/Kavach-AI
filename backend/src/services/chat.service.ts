@@ -17,7 +17,10 @@ import type { PhaseCallback } from "./pipelinePhases";
 const SYSTEM_PROMPT =
   "You are HarrierKavach AI's assistant — a helpful, direct conversational AI. " +
   "Answer clearly and concisely. If you don't know something or are unsure, " +
-  "say so rather than guessing.";
+  "say so rather than guessing. " +
+  "Answer only the latest question, on its own terms — never repeat, quote, " +
+  "or open with a previous turn's refusal, apology, or wording, even when " +
+  "the topic looks similar. Each answer starts fresh.";
 
 export interface ChatResult {
   answer: string;
@@ -89,7 +92,9 @@ export async function answerChatMessage(input: {
       content:
         `Live web search results for this question (real pages, concise excerpts):\n\n${formatWebContext(webCitations)}\n\n` +
         "Rules: use ONLY facts in excerpts; cite per sentence with [n] (e.g. '... [1]'). " +
-        "If excerpts don't contain the answer, say so. Ignore irrelevant results and answer normally.",
+        "If excerpts don't contain the answer, say exactly that and stop — do not " +
+        "restate any previous turn. Ignore irrelevant results and answer normally. " +
+        "Answer only this question, fresh; never echo a prior turn's wording.",
     });
   }
   messages.push(...trimmedHistory, { role: "user", content: input.question });

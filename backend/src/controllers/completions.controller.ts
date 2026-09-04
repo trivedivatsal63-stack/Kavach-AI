@@ -95,7 +95,7 @@ export async function completions(req: Request, res: Response) {
           role: "system",
           content:
             `Live web search results for the user's latest question (real pages, concise excerpts):\n\n${formatWebContext(webCitations)}\n\n` +
-            "Rules: use ONLY facts in excerpts; cite per sentence with [n]. If excerpts don't contain the answer, say so. Ignore irrelevant results and answer normally.",
+            "Rules: use ONLY facts in excerpts; cite per sentence with [n]. If excerpts don't contain the answer, say exactly that and stop. Answer only this question, fresh; never echo a prior turn's wording. Ignore irrelevant results and answer normally.",
         };
         // Inserted right after any caller-supplied system message(s), or at
         // the very front if none — a caller's own system prompt stays the

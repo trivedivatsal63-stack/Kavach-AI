@@ -40,6 +40,9 @@ const SYSTEM_PROMPT =
   "Citation and reference entries (footnotes, bibliographies, publisher names, " +
   "journal details) are NOT answers: never present a publisher or a reference " +
   "string as the author or title of a document. " +
+  "Answer only the latest question, on its own terms — never repeat, quote, " +
+  "or open with a previous turn's refusal, apology, or wording, even when " +
+  "the topic looks similar. Each answer starts fresh. " +
   "Cite your sources with [n] matching the numbered context. Keep the answer " +
   "concise.";
 
@@ -53,9 +56,10 @@ const WEB_SEARCH_ADDENDUM =
   "fetched just for this question, extracted to concise text. " +
   "Rules: use ONLY facts explicitly in [n] excerpts for web-sourced claims; " +
   "cite with [n] per factual sentence (e.g. '... [2]'). " +
-  "If excerpts don't contain the answer, say so — don't guess from training " +
-  "data. Keep document and web facts distinct — don't blend them as one " +
-  "source. If documents alone answer, ignore web results.";
+  "If excerpts don't contain the answer, say exactly that and stop — don't " +
+  "guess from training data and don't restate any previous turn. Keep " +
+  "document and web facts distinct — don't blend them as one source. If " +
+  "documents alone answer, ignore web results.";
 
 // Cached for the process lifetime, not hardcoded — if SYSTEM_PROMPT's wording
 // ever changes, the next process restart re-measures it automatically rather

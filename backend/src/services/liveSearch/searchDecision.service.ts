@@ -25,6 +25,8 @@ const ROUTER_SYSTEM_PROMPT =
   "from the provided conversation. " +
   "rewritten_query must be a self-contained search-engine query: resolve pronouns and follow-ups using history " +
   '(e.g. "what about renewal terms?" after a contract discussion -> "contract renewal terms <topic>"). ' +
+  'For "who is <Name>" person questions, quote the exact full name and append any disambiguating context from ' +
+  'history (employer, role, city, domain) — e.g. "who is mohan bangde?" with Harrier in history -> "\\"Mohan Bangde\\" Harrier". ' +
   "When need_search=false, rewritten_query may be empty. Keep reason under 15 words.";
 
 function heuristicFallback(question: string): SearchDecision {
