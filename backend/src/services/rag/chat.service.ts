@@ -5,6 +5,8 @@ import { countTokens, trimHistoryToTokenBudget, type HistoryTurn } from "./token
 import { formatContext } from "./citationFormat";
 import { getLiveSearchContext } from "../liveSearch/liveSearch.service";
 import { decideSearchNeed, inferDomain, type SearchDomain } from "../liveSearch/searchDecision.service";
+import { runAgentLoop } from "../agent/agentLoop.service";
+import type { ToolChatMessage } from "./completion.service";
 import { formatWebContext } from "../liveSearch/webCitationFormat";
 import { RAG_HISTORY_TOKEN_BUDGET } from "../../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG } from "../../utils/liveSearch.constants";
@@ -100,11 +102,15 @@ export async function answerQuestion(input: {
   /** Token deltas for live streaming (with signal, streams via LiteLLM SSE). */
   onToken?: (delta: string) => void;
   signal?: AbortSignal;
+  /** Agentic tool loop (Phase B): the model drives web lookups through
+   * web_search/fetch_page tools; document retrieval below always runs. */
+  agentic?: boolean;
 }): Promise<RagChatResult> {
   const mode = input.webSearch ?? "auto";
 
   let searchQuery: string | null = null;
   let domain: SearchDomain = inferDomain(input.question);
+  let routerYes = mode === true;
   if (mode === true) {
     searchQuery = input.question;
   } else if (mode === "auto") {
@@ -117,11 +123,15 @@ export async function answerQuestion(input: {
     if (decision.needSearch && decision.rewrittenQuery) {
       searchQuery = decision.rewrittenQuery;
       domain = decision.domain === "none" ? domain : decision.domain;
+      routerYes = true;
     } else {
       domain = "none";
     }
   }
-  const webSearch = searchQuery !== null;
+  // In agentic mode the loop owns web fetching; the pre-fetch below is
+  // skipped so one question never pays for two searches.
+  const willLoop = input.agentic === true && routerYes;
+  let webSearch = searchQuery !== null && !willLoop;
 
   // What retrieve()'s token-budget cutoff needs to know: how many tokens
   // this call's prompt scaffolding already commits, before any chunk content
@@ -130,7 +140,9 @@ export async function answerQuestion(input: {
   // History gets its own small, fixed budget (RAG_HISTORY_TOKEN_BUDGET) —
   // retrieved chunks are the primary value here and must not get starved
   // out of the 2048-token window by a long conversation.
-  const systemTokens = await getSystemPromptTokenCount(webSearch);
+  // willLoop assumes web context (addendum-priced) up front; a declined
+  // loop that also finds nothing exits via refusal without an LLM call.
+  const systemTokens = await getSystemPromptTokenCount(webSearch || willLoop);
   const wrapperTokens = await countTokens(`Context:\n\n\nQuestion:\n${input.question}`);
   const trimmedHistory = await trimHistoryToTokenBudget(
     input.history ?? [],
@@ -145,18 +157,24 @@ export async function answerQuestion(input: {
   // budget walk needs to know everything already spoken for, not just
   // history/system/question, or it could still overflow the window.
   // searchQuery is the rewritten form when mode='auto', raw when forced.
-  if (searchQuery) await input.onPhase?.("searching");
-  const webCitations = searchQuery
-    ? await getLiveSearchContext({
-        query: searchQuery,
-        budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
-        domain,
-      })
-    : [];
+  // Skipped entirely when the loop owns web fetching (no double search).
+  if (searchQuery && !willLoop) await input.onPhase?.("searching");
+  let webCitations =
+    searchQuery && !willLoop
+      ? await getLiveSearchContext({
+          query: searchQuery,
+          budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+          domain,
+        })
+      : [];
   const webContextTokens =
     webCitations.length > 0 ? await countTokens(formatWebContext(webCitations)) : 0;
 
-  const reservedTokens = systemTokens + wrapperTokens + historyTokens + webContextTokens;
+  const reservedTokens =
+    systemTokens +
+    wrapperTokens +
+    historyTokens +
+    (willLoop ? LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG : webContextTokens);
 
   await input.onPhase?.("retrieving");
   const citations: Citation[] = await retrieve({
@@ -165,6 +183,60 @@ export async function answerQuestion(input: {
     documentIds: input.documentIds,
     reservedTokens,
   });
+
+  // Agentic attempt: document context is injected up front with stable
+  // numbering; the model pulls web facts through tools numbered after it.
+  // A declined lookup falls back to the forced fetch below, preserving
+  // today's auto behavior exactly (never a silent downgrade).
+  if (willLoop && searchQuery) {
+    const docContext = citations.length > 0 ? formatContext(citations) : "";
+    const webStart = citations.length + 1;
+    const loopMessages: ToolChatMessage[] = [
+      {
+        role: "system",
+        content:
+          SYSTEM_PROMPT +
+          " You have web_search and fetch_page tools for live external facts — " +
+          "use them when the question needs anything beyond these document chunks. " +
+          "Cite document facts with their [n] numbers; cite tool facts per sentence " +
+          `with [n] continuing after the documents (web numbering starts at [${webStart}]). ` +
+          "If neither source supports an answer, say so plainly and stop.",
+      },
+      ...trimmedHistory,
+      {
+        role: "user",
+        content: `Context:\n${docContext}\n\nQuestion:\n${input.question}`,
+      },
+    ];
+    const loop = await runAgentLoop({
+      apiKey: input.apiKey,
+      messages: loopMessages,
+      webBudgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+      webCitationStartIndex: citations.length,
+      onPhase: input.onPhase,
+      signal: input.signal,
+    });
+    if (loop.toolCallsMade > 0) {
+      input.onToken?.(loop.content);
+      return {
+        answer: loop.content,
+        citations,
+        webCitations: loop.webCitations,
+        usage: {
+          promptTokens: loop.promptTokens,
+          completionTokens: loop.completionTokens,
+          totalTokens: loop.totalTokens,
+        },
+      };
+    }
+    await input.onPhase?.("searching");
+    webCitations = await getLiveSearchContext({
+      query: searchQuery,
+      budgetTokens: LIVE_SEARCH_TOKEN_BUDGET_WITH_RAG,
+      domain,
+    });
+    webSearch = true;
+  }
 
   if (citations.length === 0 && webCitations.length === 0) {
     return {

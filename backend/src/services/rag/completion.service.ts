@@ -32,6 +32,36 @@ export interface ChatMessage {
   content: string;
 }
 
+// Extended wire format for the agentic tool loop (agentLoop.service.ts).
+// tool_calls / tool_call_id / name pass through to LiteLLM untouched —
+// vLLM's --tool-call-parser mistral produces and consumes this shape.
+export interface ToolChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface ParsedToolCall {
+  id: string;
+  name: string;
+  argsText: string;
+}
+
 export interface ChatCompletionResult {
   content: string;
   promptTokens: number;
@@ -39,9 +69,16 @@ export interface ChatCompletionResult {
   totalTokens: number;
 }
 
+export interface ToolChatResult extends ChatCompletionResult {
+  toolCalls: ParsedToolCall[];
+  finishReason?: string;
+}
+
+// ToolChatMessage is a widening of ChatMessage (plain system/user/
+// assistant messages satisfy both), so existing callers are unaffected.
 export async function completeChat(
   apiKey: string,
-  messages: ChatMessage[],
+  messages: ToolChatMessage[],
   options?: { maxTokens?: number }
 ): Promise<ChatCompletionResult> {
   const res = await fetch(`${ragConfig.litellmBaseUrl}/v1/chat/completions`, {
@@ -109,7 +146,7 @@ export async function completeChat(
 // Aborting via `signal` throws StreamAborted carrying streamed-so-far text.
 export async function completeChatStream(
   apiKey: string,
-  messages: ChatMessage[],
+  messages: ToolChatMessage[],
   options?: { maxTokens?: number; onDelta?: (delta: string) => void; signal?: AbortSignal }
 ): Promise<ChatCompletionResult> {
   let res: Response;
@@ -207,6 +244,92 @@ export async function completeChatStream(
   }
 
   return { content, promptTokens, completionTokens, totalTokens };
+}
+
+// Tool-capable completion for the agentic loop (agentLoop.service.ts).
+// Non-streamed by design: vLLM SSE tool-call chunk reassembly is fragile,
+// so the loop works on whole responses and the controller emits the final
+// text as token events. Any tool-parse failure degrades to toolCalls: []
+// with content intact, letting callers fall back to today's forced path.
+export async function completeChatWithTools(
+  apiKey: string,
+  messages: ToolChatMessage[],
+  tools: ToolDefinition[],
+  options?: { maxTokens?: number; signal?: AbortSignal; toolChoice?: string }
+): Promise<ToolChatResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${ragConfig.litellmBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: ragConfig.chatModel,
+        messages,
+        tools,
+        tool_choice: options?.toolChoice ?? "auto",
+        max_tokens: options?.maxTokens ?? 2048,
+      }),
+      signal: options?.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") throw new StreamAborted("");
+    throw err;
+  }
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const message =
+      (data as { error?: { message?: string } }).error?.message ??
+      `LiteLLM returned ${res.status}`;
+    throw new CompletionError(res.status, message);
+  }
+
+  const data = (await res.json().catch(() => ({}))) as {
+    choices?: Array<{
+      finish_reason?: string;
+      message?: {
+        content?: string | null;
+        reasoning_content?: string | null;
+        reasoning?: string | null;
+        tool_calls?: Array<{
+          id?: unknown;
+          type?: unknown;
+          function?: { name?: unknown; arguments?: unknown };
+        }>;
+      };
+    }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  };
+
+  const message = data.choices?.[0]?.message;
+  const content =
+    (message?.content && message.content.trim()) ||
+    (message?.reasoning_content && message.reasoning_content.trim()) ||
+    (message?.reasoning && message.reasoning.trim()) ||
+    "";
+
+  const toolCalls: ParsedToolCall[] = [];
+  for (const tc of message?.tool_calls ?? []) {
+    if (
+      typeof tc?.id === "string" &&
+      typeof tc?.function?.name === "string" &&
+      typeof tc?.function?.arguments === "string"
+    ) {
+      toolCalls.push({ id: tc.id, name: tc.function.name, argsText: tc.function.arguments });
+    }
+  }
+
+  return {
+    content,
+    toolCalls,
+    finishReason: data.choices?.[0]?.finish_reason,
+    promptTokens: data.usage?.prompt_tokens ?? 0,
+    completionTokens: data.usage?.completion_tokens ?? 0,
+    totalTokens: data.usage?.total_tokens ?? 0,
+  };
 }
 
 // Shared by every controller that surfaces a CompletionError to an HTTP

@@ -180,6 +180,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
         documentIds,
         history,
         webSearch,
+        agentic: true,
       });
       assistantContent = result.answer;
       citations = result.citations;
@@ -191,6 +192,7 @@ export async function sendMessage(req: Request, res: Response, next: NextFunctio
         question: content,
         history,
         webSearch,
+        agentic: true,
       });
       assistantContent = result.answer;
       webCitations = result.webCitations;
@@ -298,8 +300,6 @@ export async function sendMessageStream(req: Request, res: Response) {
   try {
     const { conversation, history, rawKey, webSearch, content } = prep;
     const onPhase = (phase: string) => send("status", { phase });
-    const onToken = (delta: string) => send("token", { delta });
-    const signal = aborter.signal;
 
     if (conversation.mode === CONVERSATION_MODE.RAG) {
       const documentIds = Array.isArray(conversation.documentIds)
@@ -313,8 +313,9 @@ export async function sendMessageStream(req: Request, res: Response) {
         history,
         webSearch,
         onPhase,
-        onToken,
-        signal,
+        onToken: (delta) => send("token", { delta }),
+        signal: aborter.signal,
+        agentic: true,
       });
       await finish(content, result.answer, result.citations, result.webCitations, result.usage, false);
     } else {
@@ -324,8 +325,9 @@ export async function sendMessageStream(req: Request, res: Response) {
         history,
         webSearch,
         onPhase,
-        onToken,
-        signal,
+        onToken: (delta) => send("token", { delta }),
+        signal: aborter.signal,
+        agentic: true,
       });
       await finish(content, result.answer, undefined, result.webCitations, result.usage, false);
     }

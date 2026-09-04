@@ -7,6 +7,8 @@ import type { WebCitation } from "./liveSearch/types";
 import { CHAT_HISTORY_TOKEN_BUDGET } from "../utils/chat.constants";
 import { LIVE_SEARCH_TOKEN_BUDGET_STANDALONE } from "../utils/liveSearch.constants";
 import type { PhaseCallback } from "./pipelinePhases";
+import { runAgentLoop } from "./agent/agentLoop.service";
+import type { ToolChatMessage } from "./rag/completion.service";
 
 // General-purpose (non-RAG) conversational chat — no retrieval, no document
 // grounding, just a normal multi-turn conversation against the model. Spend
@@ -49,6 +51,10 @@ export async function answerChatMessage(input: {
    * answer streams via LiteLLM SSE instead of one blocking call. */
   onToken?: (delta: string) => void;
   signal?: AbortSignal;
+  /** Agentic tool loop (Phase B): offer web_search/fetch_page tools and let
+   * the model drive lookups, instead of the hardcoded fetch below. Gated by
+   * the same router, with forced-search fallback when the model declines. */
+  agentic?: boolean;
 }): Promise<ChatResult> {
   const mode = input.webSearch ?? "auto";
 
@@ -69,6 +75,42 @@ export async function answerChatMessage(input: {
     } else {
       domain = "none";
     }
+  }
+
+  // Agentic path: the model drives lookups through tools. History is
+  // pre-shrunk by a full web budget (loop results land outside measured
+  // accounting), and a declined lookup falls back to today's forced fetch.
+  if (input.agentic && searchQuery) {
+    const loopHistory = await trimHistoryToTokenBudget(
+      input.history,
+      Math.max(0, CHAT_HISTORY_TOKEN_BUDGET - LIVE_SEARCH_TOKEN_BUDGET_STANDALONE)
+    );
+    const loopMessages: ToolChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...loopHistory,
+      { role: "user", content: input.question },
+    ];
+    const loop = await runAgentLoop({
+      apiKey: input.apiKey,
+      messages: loopMessages,
+      webBudgetTokens: LIVE_SEARCH_TOKEN_BUDGET_STANDALONE,
+      onPhase: input.onPhase,
+      signal: input.signal,
+    });
+    if (loop.toolCallsMade > 0) {
+      input.onToken?.(loop.content);
+      return {
+        answer: loop.content,
+        webCitations: loop.webCitations,
+        usage: {
+          promptTokens: loop.promptTokens,
+          completionTokens: loop.completionTokens,
+          totalTokens: loop.totalTokens,
+        },
+      };
+    }
+    // Model declined the tools — fall through to the forced fetch below
+    // with the router's query, preserving today's auto behavior exactly.
   }
 
   if (searchQuery) await input.onPhase?.("searching");
