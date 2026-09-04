@@ -129,6 +129,12 @@ if [[ ! -x /workspace/venvs/litellm/bin/pip ]]; then
 fi
 /workspace/venvs/litellm/bin/pip install --upgrade pip
 /workspace/venvs/litellm/bin/pip install 'litellm[proxy]'
+# The DB-backed proxy needs the prisma client package at startup
+# (proxy_server imports prisma.engine on boot for Postgres). The [proxy]
+# extra does not reliably pull it in — without this, litellm crash-loops
+# with "ModuleNotFoundError: No module named 'prisma'". Startup generates
+# the client itself once the package is present.
+/workspace/venvs/litellm/bin/pip install 'prisma>=0.11'
 
 echo "==> [5/10] Embedding venv"
 if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
@@ -136,14 +142,15 @@ if [[ ! -x /workspace/venvs/embedding/bin/pip ]]; then
 fi
 /workspace/venvs/embedding/bin/pip install --upgrade pip
 /workspace/venvs/embedding/bin/pip install -r "${REPO_ROOT}/embedding/requirements.txt"
-# fastembed pulls in the CPU-only onnxruntime as a transitive dependency;
-# it does NOT get replaced by the onnxruntime-gpu install above (confirmed
-# live: both ended up co-installed, and whichever wins the shared
-# `onnxruntime` import namespace determined the available providers --
-# here it silently fell back to CPU-only, with no error, just a slow
-# 250%-CPU embedding service instead of using the GPU that was sitting
-# idle). Force onnxruntime-gpu to be the only one present.
-/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime 2>/dev/null || true
+# fastembed pulls in the CPU-only onnxruntime as a transitive dependency.
+# Both dists install into the same top-level `onnxruntime/` directory, so
+# merely uninstalling the CPU dist afterwards GUTS the shared install
+# (confirmed live: `import onnxruntime` succeeds but has no SessionOptions,
+# crash-looping the embedding service). Wipe both and install ONLY the GPU
+# build, then fail fast if the module is still broken.
+/workspace/venvs/embedding/bin/pip uninstall -y onnxruntime onnxruntime-gpu 2>/dev/null || true
+/workspace/venvs/embedding/bin/pip install 'onnxruntime-gpu>=1.21,<1.27'
+/workspace/venvs/embedding/bin/python -c "import onnxruntime as o; assert hasattr(o, 'SessionOptions'), 'broken onnxruntime install'; print('    onnxruntime', o.__version__, 'OK')"
 
 echo "==> [6/10] Qdrant binary"
 QDRANT_BIN="/workspace/qdrant/qdrant"
